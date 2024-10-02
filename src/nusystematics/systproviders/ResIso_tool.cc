@@ -127,7 +127,7 @@ ResIso::GetEventResponse(genie::EventRecord const &ev) {
   // return early if this event isn't one we provide responses for
   if (!ev.Summary()->ProcInfo().IsResonant() ||
       !ev.Summary()->ProcInfo().IsWeakCC()) {
-    return resp;
+    return this->GetDefaultEventResponse();
   }
 
   // loop through and calculate weights

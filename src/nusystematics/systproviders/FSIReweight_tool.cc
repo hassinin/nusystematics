@@ -83,11 +83,6 @@ FSIReweight::GetEventResponse(genie::EventRecord const &ev) {
   // when the event is not applicable for this type of reweighting,
   // use GetDefaultEventResponse() to return an auto-1.-filled vector
 
-  //if (!ev.Summary()->ProcInfo().IsQuasiElastic() ||
-  //    !ev.Summary()->ProcInfo().IsWeakCC()) {
-  //  return this->GetDefaultEventResponse();
-  //}
-
   genie::GHepParticle *FSLep = ev.FinalStatePrimaryLepton();
   genie::GHepParticle *ISLep = ev.Probe();
   genie::GHepParticle *ISNuc = ev.TargetNucleus();
