@@ -52,7 +52,7 @@ private:
 
   // TH: change these!
   int NEUTMode, Pdgnu, pdgfslep, QELTarget;
-  double Enu, momfslep, cthetafslep, Q2, q0, q3, W, Emiss, Emiss_preFSI;
+  double Enu, momfslep, cthetafslep, Q2, q0, q3, W, Emiss, Emiss_preFSI, KF_tree, radius, ref_prob_density, new_prob_density;
   TVector3 pmiss, pmiss_preFSI;
 };
 

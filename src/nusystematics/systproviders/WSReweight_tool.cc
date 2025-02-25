@@ -90,6 +90,12 @@ WSReweight::GetEventResponse(genie::EventRecord const &ev) {
   double Emiss_preFSI, Pmiss_preFSI;
   double Q = 0.01;
   int nucleon_PDG, target_PDG;
+  double KF = 0;
+
+    // GHepRecord::TargetNucleus() is designed to return nullptr for a free nucleon target (e.g., hydrogen)
+  // If TargetNucleus() is available, use ev.TargetNucleus()->Pdg()
+  // if not, force it to hydrogen
+  target_PDG = ev.TargetNucleus() ? ev.TargetNucleus()->Pdg() : 1000010010;
   
   genie::GHepParticle *nucleon = ev.HitNucleon();
   if (nucleon == NULL){
@@ -97,6 +103,12 @@ WSReweight::GetEventResponse(genie::EventRecord const &ev) {
     //     want to skip these events and not re-weight
     Emiss_preFSI = -999;
     nucleon_PDG = -999;
+    target_PDG = -999;
+  } else if (nucleon->Mass() > 1) //Getting rid of 2p2h for now
+  {
+    Emiss_preFSI = -999;
+    nucleon_PDG = -999;
+    target_PDG = -999;
   }
   else {
     if(estimate_emiss){
@@ -106,18 +118,16 @@ WSReweight::GetEventResponse(genie::EventRecord const &ev) {
       Emiss_preFSI = nucleon->RemovalEnergy();
     }
     
-    Pmiss_preSFI = nucleon->P4()->Vect().Mag();
+    // Pmiss_preFSI = nucleon->P4()->Vect().Mag();
+    Pmiss_preFSI = sqrt(nucleon->Px() * nucleon->Px() + nucleon->Py() * nucleon->Py() + nucleon->Pz() * nucleon->Pz());
     nucleon_PDG = nucleon->Pdg();
+    KF = sqrt(pow(Emiss_preFSI + sqrt(pow(Pmiss_preFSI, 2) + pow(nucleon->Mass(), 2)) - Q, 2) - pow(nucleon->Mass(), 2));
   }
 
   bool isProton = (nucleon_PDG == 2212);
 
-  // GHepRecord::TargetNucleus() is designed to return nullptr for a free nucleon target (e.g., hydrogen)
-  // If TargetNucleus() is available, use ev.TargetNucleus()->Pdg()
-  // if not, force it to hydrogen
-  target_PDG = ev.TargetNucleus() ? ev.TargetNucleus()->Pdg() : 1000010010;
-
-  double KF = sqrt(pow(Emiss_prefFSI + sqrt(pow(Pmiss_preFSI, 2) + pow(nucleon->Mass(), 2)) - Q, 2) - pow(nucleon->Mass(), 2));
+  // std::cout << *nucleon << std::endl;
+  // std::cout << "Mass: " << ev.Summary()->InitState().Tgt().HitNucMass() << std::endl;
 
   // now make the output
   systtools::event_unit_response_t resp;
@@ -137,6 +147,19 @@ WSReweight::GetEventResponse(genie::EventRecord const &ev) {
     }
   }
 
+  if (pidx_surface_thickness != systtools::kParamUnhandled<size_t>) {
+    resp.push_back( {md[pidx_surface_thickness].systParamId, {}} );
+    if (target_PDG == 1000180400){
+      for (double var : md[pidx_surface_thickness].paramVariations) {
+        resp.back().responses.push_back( GetWeightFomKF(KF, kAr40Radius, var, isProton) );
+      } 
+    }
+    else{
+      for (unsigned int i = 0; i < md[pidx_surface_thickness].paramVariations.size(); i++) {
+        resp.back().responses.push_back(1);
+      }
+    }
+  }
 
   if (fill_valid_tree) {
 
@@ -156,6 +179,19 @@ WSReweight::GetEventResponse(genie::EventRecord const &ev) {
     W = ev.Summary()->Kine().W(true);
     q0 = emTransfer.E();
     q3 = emTransfer.Vect().Mag();
+
+    Emiss = Emiss_preFSI;
+    if(nucleon){
+      pmiss = nucleon->P4()->Vect();
+    }
+    else{
+      pmiss = TLorentzVector(0,0,0,0).Vect();
+    }
+    KF_tree = KF;
+    radius = GetRadiusFromKF(KF, isProton);
+    radius = std::max(radius, 0.0); // No negative radii!
+    ref_prob_density = genie::utils::nuclear::Density(radius, 40);
+    new_prob_density = genie::utils::nuclear::DensityWoodsSaxon(radius, 4, kAr40SkinDepth);
 
     valid_tree->Fill();
   }
@@ -183,6 +219,10 @@ void WSReweight::InitValidTree() {
   valid_tree->Branch("q3", &q3);
   valid_tree->Branch("pmiss", &pmiss);
   valid_tree->Branch("Emiss", &Emiss);
+  valid_tree->Branch("KF", &KF_tree);
+  valid_tree->Branch("radius", &radius);
+  valid_tree->Branch("ref_prob_density", &ref_prob_density);
+  valid_tree->Branch("new_prob_density", &new_prob_density);
 }
 
 WSReweight::~WSReweight() {
