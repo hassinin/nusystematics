@@ -16,6 +16,7 @@
 #include "nusystematics/systproviders/ResIso_tool.hh"
 #include "nusystematics/systproviders/DIRT2_Emiss_tool.hh"
 #include "nusystematics/systproviders/CCQERPAReweight_tool.hh"
+#include "nusystematics/systproviders/CCQECRPAReweight_tool.hh"
 #include "nusystematics/systproviders/FSIReweight_tool.hh"
 #include "nusystematics/systproviders/WSReweight_tool.hh"
 
@@ -59,6 +60,8 @@ make_instance(fhicl::ParameterSet const &paramset) {
     return std::make_unique<ResIso>(paramset);
   } else if (tool_type == "CCQERPAReweight"){
     return std::make_unique<CCQERPAReweight>(paramset);
+  } else if (tool_type == "CCQECRPAReweight"){
+    return std::make_unique<CCQECRPAReweight>(paramset);
   } else if (tool_type == "FSIReweight"){
   return std::make_unique<FSIReweight>(paramset);
   } else if (tool_type == "WSReweight") {
