@@ -1,0 +1,27 @@
+CCQECRPA_Tool_Config: {
+
+    tool_type: "CCQECRPAReweight"
+    instance_name: "SBNNuSyst_CCQECRPAReweight_multisigma"
+
+    CCQECRPAReweight_central_value: 0
+    CCQECRPAReweight_variation_descriptor: "[0, 1]"
+
+    CCQECRPAReweight_input_manifest: {
+      RWMode: "q3q0"
+      ENuBoundary: 2.0
+      input_file: "/exp/sbnd/data/users/munjung/CRPAReweight_templates.root"
+      inputs: [
+          {
+            name: "LowE_WithCRPA"
+            input_hist: "LowE/h_ENuq3q0_With_CRPA"
+          },
+          {
+            name: "LowE_WithoutCRPA"
+            input_hist: "LowE/h_ENuq3q0_Without_CRPA"
+          }
+      ]
+    }
+
+  }
+
+syst_providers: [CCQECRPA_Tool_Config]
