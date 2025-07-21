@@ -8,23 +8,31 @@
 
 #include "nusystematics/utility/GENIEUtils.hh"
 
-#include "TFile.h"
-#include "TTree.h"
+#include "fhiclcpp/ParameterSet.h"
 
 #include <memory>
 #include <string>
 
-class CCMECModelReweight: public nusyst::IGENIESystProvider_tool {
+// Forward declaration of genie::EventRecord
+namespace genie {
+class EventRecord;
+}
 
-  // Constructor
-  explicit CCMECModelReweight(const fhicl::ParameterSet &ps):
-    IGENIESystProvider_tool(ps),
-    fCalculator(ps) {}
+namespace nusyst {
+class CCMECModelReweight : public IGENIESystProvider_tool {
 
-  // Calculate weight
-  systtools::event_unit_response_t GetEventResponse(const genie::EventRecord &ev);
+public:
+  // Constructor from a FHiCL parameter set
+  explicit CCMECModelReweight(fhicl::ParameterSet const &ps);
+
+  // The primary method for calculating the event weight
+  systtools::event_unit_response_t
+  GetEventResponse(genie::EventRecord const &ev) override;
 
 protected:
-  nusyst::CCMECModelReweightCalculator fCalculator;
+  // The calculator object that loads histograms and performs the reweighting logic
+  CCMECModelReweightCalculator fCalculator;
 };
+} // namespace nusyst
+
 #endif
