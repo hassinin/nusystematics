@@ -12,6 +12,8 @@ SET(SYSTP_IMPLFILES
   CCQERPAReweight_tool.cc
   FSIReweight_tool.cc
   WSReweight_tool.cc
+  ValenciaMECq0q3InterpWeighting_tool.cc
+  ../responsecalculators/ValenciaMECq0q3ResponseCalc.cc
   )
 
 if(GENIEReWeight_ENABLED)
@@ -37,6 +39,7 @@ SET(SYSTP_HDRFILES
   CCQERPAReweight_tool.hh
   FSIReweight_tool.hh
   WSReweight_tool.hh
+  ValenciaMECq0q3InterpWeighting_tool.hh
 )
 
 if(GENIEReWeight_ENABLED)
@@ -51,13 +54,24 @@ if(GENIEReWeight_ENABLED)
 endif()
 
 add_library(nusystematics_systproviders SHARED ${SYSTP_IMPLFILES})
+# bring in the SystematicTools headers so REGISTER_SYST_PROVIDER() is defined
+target_include_directories(nusystematics_systproviders
+  PUBLIC
+    $<TARGET_PROPERTY:systematicstools_interface,INTERFACE_INCLUDE_DIRECTORIES>
+)
 add_library(nusyst::systproviders ALIAS nusystematics_systproviders)
 
 set_target_properties(nusystematics_systproviders PROPERTIES 
   PUBLIC_HEADER "${SYSTP_HDRFILES}"
   EXPORT_NAME systproviders )
 
-target_link_libraries(nusystematics_systproviders PUBLIC nusyst::responsecalculators systtools::all Eigen3::Eigen)
+target_link_libraries(nusystematics_systproviders
+  PRIVATE
+    systematicstools_interface
+    nusyst::responsecalculators
+    systtools::all
+    Eigen3::Eigen
+)
 
 install(TARGETS nusystematics_systproviders
     EXPORT nusyst-targets
