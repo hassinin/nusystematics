@@ -1,0 +1,65 @@
+ValenciaInterp: {
+
+  tool_type: "ValenciaMECq0q3InterpWeighting"
+
+  # full energy grid (0.4 to 2.5 GeV, 0.1 GeV step)
+  Energies : [ 0.4,0.5,0.6,0.7,0.8,0.9,
+               1.0,1.1,1.2,1.3,1.4,1.5,
+               1.6,1.7,1.8,1.9,2.0,2.1,
+               2.2,2.3,2.4,2.5 ]
+
+  WeightLimits : [0.1,5.0]
+
+  np_files : [
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.5GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.6GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.7GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.8GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_0.9GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.0GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.1GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.2GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.3GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.5GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.6GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.7GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.8GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_1.9GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.0GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.1GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.2GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.3GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_np_2.5GeV.root"
+  ]
+
+  nn_files : [
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.5GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.6GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.7GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.8GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_0.9GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.0GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.1GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.2GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.3GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.5GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.6GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.7GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.8GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_1.9GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.0GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.1GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.2GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.3GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.4GeV.root",
+    "/exp/icarus/app/users/hassinin/reweights_2p2h_rootfiles_nusystematics/reweight_combined_nn_2.5GeV.root"
+  ]
+}
+
+# list of provider instances NuSystematics should instantiate
+syst_providers : [ValenciaInterp]

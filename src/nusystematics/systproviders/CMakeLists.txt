@@ -61,6 +61,9 @@ target_include_directories(nusystematics_systproviders
 )
 add_library(nusyst::systproviders ALIAS nusystematics_systproviders)
 
+# Add GENIE include directory directly (UPS setup version)
+target_include_directories(nusystematics_systproviders PUBLIC /cvmfs/larsoft.opensciencegrid.org/products/genie/v3_06_00/Linux64bit+3.10-2.17-e26-prof/include/GENIE/Framework/EventGen)
+
 set_target_properties(nusystematics_systproviders PROPERTIES 
   PUBLIC_HEADER "${SYSTP_HDRFILES}"
   EXPORT_NAME systproviders )
