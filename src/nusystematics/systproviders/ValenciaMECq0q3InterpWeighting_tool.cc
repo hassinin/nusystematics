@@ -106,17 +106,15 @@ ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
 Topology
 ValenciaMECq0q3InterpWeighting::classifyEvent(genie::EventRecord const &ev) const
 {
-  int nP = 0, nN = 0;
   for (int i = 0; i < ev.GetEntries(); ++i) {
   auto const *p = ev.Particle(i); // GHepParticle*
   if (!p) continue;
-  if (p->Status() != genie::kIStStableFinalState) continue;
-  if (p->Pdg() == genie::kPdgProton)  ++nP;
-  if (p->Pdg() == genie::kPdgNeutron) ++nN;
+  if (p->Status() == genie::kIStNucleonTarget) {
+    if (p->Pdg() == genie::kPdgClusterNN) return Topology::nn;
+    if (p->Pdg() == genie::kPdgClusterNP) return Topology::np;
   }
-  if (nP == 2 && nN == 0) return Topology::np;
-  if (nP == 1 && nN == 1) return Topology::nn;
-  return Topology::unknown;
+}
+return Topology::unknown;
 }
 //--------------------------------------------------------------------
 void
