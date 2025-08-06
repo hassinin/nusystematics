@@ -1,39 +1,36 @@
+/*******************************************************************************
+ *   ValenciaMECq0q3InterpWeighting_tool.hh
+ ******************************************************************************/
+#ifndef NUSYST_VALENCIA_MEC_Q0Q3_INTERPWEIGHTING_TOOL_HH
+#define NUSYST_VALENCIA_MEC_Q0Q3_INTERPWEIGHTING_TOOL_HH
 
-#pragma once
-#include "nusystematics/utility/exceptions.hh"
-#include "fhiclcpp/ParameterSet.h"
 #include "nusystematics/interface/IGENIESystProvider_tool.hh"
 #include "nusystematics/responsecalculators/ValenciaMECq0q3ResponseCalc.hh"
-#include "systematicstools/interface/EventResponse_product.hh"
-#include "systematicstools/interface/types.hh"
-#include "systematicstools/interface/ISystProviderTool.hh"
-#include "EventRecord.h"
-#include "TH2.h"
-#include "TFile.h"
-#include <map>
-#include <vector>
-#include <memory>
+#include <unordered_map>
 
 namespace nusyst {
 
-enum class Topology { np, nn, unknown };
-
 class ValenciaMECq0q3InterpWeighting : public IGENIESystProvider_tool {
 public:
-    ValenciaMECq0q3InterpWeighting(fhicl::ParameterSet const &ps);
-    systtools::SystMetaData BuildSystMetaData(fhicl::ParameterSet const &cfg, systtools::paramId_t firstId);
-    bool SetupResponseCalculator(fhicl::ParameterSet const &tool_opts);
-    fhicl::ParameterSet GetExtraToolOptions() { return tool_options; }
-    Topology classifyEvent(genie::EventRecord const &ev) const;
-    void computeQ0Q3(genie::EventRecord const &ev, double &q0, double &q3) const;
-    double getInterpolatedWeight(double E, double q0, double q3, Topology topo) const;
-    systtools::event_unit_response_t GetEventResponse(genie::EventRecord const &ev);
+  explicit ValenciaMECq0q3InterpWeighting(const fhicl::ParameterSet& pset);
+  
+  systtools::SystMetaData BuildSystMetaData(fhicl::ParameterSet const &,
+                                            systtools::paramId_t);
+  bool SetupResponseCalculator(fhicl::ParameterSet const &);
+  systtools::event_unit_response_t GetEventResponse(genie::EventRecord const& ev) override;
 
 private:
-    std::vector<double> fEnergies;
-    std::map<Topology, std::vector<std::unique_ptr<ValenciaMECq0q3ResponseCalc>>> fCalcs;
-    std::pair<double, double> fWeightLimits{0.1, 5.0};
-    fhicl::ParameterSet tool_options;
+  enum class Topo { np = 0, nn = 1, unknown = 2 };
+  static Topo  ClassifyEvent(genie::EventRecord const&);
+  static void  ComputeQ0Q3(genie::EventRecord const&, double& q0, double& q3,
+                           double& Enu);
+
+  std::vector<double>                                 fEgrid;   ///< GeV
+  double                                              fWmin, fWmax;
+  std::unordered_map<Topo,
+      std::vector<std::unique_ptr<ValenciaMECq0q3ResponseCalc>>> fCalcs;
 };
 
 } // namespace nusyst
+
+#endif // NUSYST_VALENCIA_MEC_Q0Q3_INTERPWEIGHTING_TOOL_HH

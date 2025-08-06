@@ -1,40 +1,31 @@
-#pragma once
-//
-// Simple 2-D (q0,q3) response calculator for Valencia MEC.
-//
-// It inherits from TemplateResponseCalculatorBase<2,false> (2-D, NOT
-// vertical) so that NuSystematics handle() helpers will work.
-//
-#include "nusystematics/responsecalculators/TemplateResponseCalculatorBase.hh"
+/*******************************************************************************
+ * 1.  src/ValenciaMECq0q3ResponseCalc.hh
+ ******************************************************************************/
+#ifndef NUSYST_VALENCIA_MEC_Q0Q3_RESPONSECALC_HH
+#define NUSYST_VALENCIA_MEC_Q0Q3_RESPONSECALC_HH
 
-#include "TH2.h"
+#include <memory>
+#include <TH2D.h>
 
 namespace nusyst {
 
-class ValenciaMECq0q3ResponseCalc : public TemplateResponseCalculatorBase<2,false> {
+/// Lightweight helper that evaluates a single 2‑D weight histogram.
+class ValenciaMECq0q3ResponseCalc {
 public:
-  using base_t = TemplateResponseCalculatorBase<2,false>;
+  /// Constructor takes ownership of the histogram (cloned internally).
+  ValenciaMECq0q3ResponseCalc(TH2D* h, double w_min = 0.0, double w_max = 5.0);
 
-  ValenciaMECq0q3ResponseCalc() = default;
-  /// Construct from an *already-cloned* TH2 histogram
-  explicit ValenciaMECq0q3ResponseCalc(TH2 *hist) {
-    // Store the histogram in BinnedResponses with key 0
-    this->BinnedResponses[0] = std::unique_ptr<TH2>(hist);
-  }
+  /// Central weight with **bilinear interpolation** inside the map.
+  double GetCentralWeight(double q0, double q3) const;
 
-  std::string GetCalculatorName() const override;
+  /// Up / Down side variation (ivar = ±1) – symmetric envelope 2 − w_CV.
+  double GetVariation(int ivar, double q0, double q3) const;
 
-  /** Return the (q0,q3) bin index with edge clamping. */
-  bin_it_t GetBin(std::array<double,2> const &q0q3) const override {
-    TH2 *h = this->BinnedResponses.begin()->second.get();
-    int x = h->GetXaxis()->FindFixBin(q0q3[1]);          // q3 on X
-    int y = h->GetYaxis()->FindFixBin(q0q3[0]);          // q0 on Y
-    x = std::clamp(x, 1, h->GetNbinsX());
-    y = std::clamp(y, 1, h->GetNbinsY());
-    return h->GetBin(x,y);
-  }
+private:
+  std::unique_ptr<TH2D> fHist;   ///< owned, thread‑safe clone of the histogram
+  double fWmin, fWmax;           ///< clamp limits
 };
 
-  // ...existing code...
-
 } // namespace nusyst
+
+#endif // NUSYST_VALENCIA_MEC_Q0Q3_RESPONSECALC_HH

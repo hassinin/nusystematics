@@ -1,196 +1,163 @@
-//======================================================================
-//  ValenciaMECq0q3InterpWeighting_tool.cc   (re-write)
-//======================================================================
+/*******************************************************************************
+ * ValenciaMECq0q3InterpWeighting_tool.cc
+ ******************************************************************************/
 #include "ValenciaMECq0q3InterpWeighting_tool.hh"
-#include "nusystematics/responsecalculators/ValenciaMECq0q3ResponseCalc.hh"
+#include <fhiclcpp/ParameterSet.h>
+#include <TFile.h>
+#include <TKey.h>
+#include <TLorentzVector.h>
+#include <TString.h>  // For Form function
+#include <cmath>
 
-#include "systematicstools/interface/EventResponse_product.hh"
-#include "nusystematics/utility/exceptions.hh"
+// SystematicsTools includes
+#include "systematicstools/utility/FHiCLSystParamHeaderUtility.hh"
+
+// GENIE includes for particle access
 #include "Framework/GHEP/GHepParticle.h"
-#include "Framework/GHEP/GHepRecord.h"
-#include "fhiclcpp/ParameterSet.h"
-#include "Framework/GHEP/GHepParticle.h"
-#include "TLorentzVector.h"
+#include "Framework/GHEP/GHepStatus.h"
 #include "Framework/ParticleData/PDGCodes.h"
-#include <algorithm>
-#include <numeric>
 
-using namespace systtools;   // only inside this translation unit
+using namespace nusyst;
 
-namespace nusyst
+// ---------------------------------------------------------------------------
+ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
+    const fhicl::ParameterSet& p)
+  : IGENIESystProvider_tool(p),  // Call base class constructor
+    fEgrid(p.get<std::vector<double>>("EnergyGrid")),
+    fWmin(p.get<double>("WeightLimits.min", 0.1)),
+    fWmax(p.get<double>("WeightLimits.max", 5.0))
 {
-//--------------------------------------------------------------------
-// ctor
-ValenciaMECq0q3InterpWeighting::
-ValenciaMECq0q3InterpWeighting(fhicl::ParameterSet const &ps)
-  : IGENIESystProvider_tool(ps) {}
+  const std::string fname = p.get<std::string>("WeightFile");
+  TFile f(fname.c_str(), "READ");
+  if (!f.IsOpen()) throw std::runtime_error("Cannot open " + fname);
 
-//--------------------------------------------------------------------
-// metadata
-SystMetaData
-ValenciaMECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &cfg,
-                                                  paramId_t firstId)
-{
-  SystMetaData md;
-  SystParamHeader h;
-  h.systParamId       = firstId++;
-  h.prettyName        = "ValenciaMEC_q0q3Interp";
-  h.centralParamValue = 0.0;
-  h.paramVariations   = {-1.,0.,1.};
-  
-  md.push_back(h);
-
-  // copy only simple values / vectors – no nested tables
-  if (cfg.has_key("Energies"))
-    tool_options.put("Energies", cfg.get<std::vector<double>>("Energies"));
-
-  if (cfg.has_key("WeightLimits"))
-    tool_options.put("WeightLimits", cfg.get<std::vector<double>>("WeightLimits"));
-
-  if (cfg.has_key("np_files"))
-    tool_options.put("np_files", cfg.get<std::vector<std::string>>("np_files"));
-
-  if (cfg.has_key("nn_files"))
-    tool_options.put("nn_files", cfg.get<std::vector<std::string>>("nn_files"));
-  return md;
+  for (Topo topo : {Topo::np, Topo::nn}) {
+    const char* tag = (topo == Topo::np ? "np" : "nn");
+    auto& v = fCalcs[topo]; v.reserve(fEgrid.size());
+    for (double E : fEgrid) {
+      const std::string hname = Form("h_weights_map_%s_%0.1fGeV", tag, E);
+      if (TH2D* h = dynamic_cast<TH2D*>(f.Get(hname.c_str()))) {
+        v.emplace_back(std::make_unique<ValenciaMECq0q3ResponseCalc>(h, fWmin, fWmax));
+      } else {
+        throw std::runtime_error("Missing histogram " + hname);
+      }
+    }
+  }
 }
 
-//--------------------------------------------------------------------
-// set-up (load histograms & create calculators)
-bool
-ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
-    fhicl::ParameterSet const &tool_opts)
-{
-  // Read directly from tool_opts instead of looking for nested parameter
-  fhicl::ParameterSet const &pset = tool_opts;
-
-  // energies ---------------------------------------------------------
-  fEnergies = pset.get<std::vector<double>>("Energies");
-  if (fEnergies.empty())
-    throw invalid_ToolConfigurationFHiCL() << "[ValenciaMEC] missing Energies";
-  std::sort(fEnergies.begin(), fEnergies.end());
-
-  // helper to load one topology -------------------------------------
-  auto load = [&](Topology topo, std::string const &key)
-  {
-    if (!pset.has_key(key)) return;
-    auto const files = pset.get<std::vector<std::string>>(key);
-    fCalcs[topo].resize(fEnergies.size());
-
-    for (std::size_t i = 0; i < fEnergies.size(); ++i) {
-      if (i >= files.size()) continue;
-      TFile f(files[i].c_str(), "READ");
-      if (!f.IsOpen()) continue;
-      TH2 *raw = nullptr;
-      f.GetObject("h_weights_map", raw);
-      if (!raw) continue;
-      std::unique_ptr<TH2> h(static_cast<TH2*>(raw->Clone()));
-      h->SetDirectory(nullptr);
-      fCalcs[topo][i] =
-        std::make_unique<ValenciaMECq0q3ResponseCalc>(h.release());
-    }
-  };
-  load(Topology::np, "np_files");
-  load(Topology::nn, "nn_files");
-
-  // optional limits --------------------------------------------------
-  if (pset.has_key("WeightLimits")) {
-    auto v = pset.get<std::vector<double>>("WeightLimits");
-    if (v.size() == 2) fWeightLimits = {v[0], v[1]};
+// ---------------------------------------------------------------------------
+systtools::SystMetaData ValenciaMECq0q3InterpWeighting::BuildSystMetaData(
+    fhicl::ParameterSet const &ps, systtools::paramId_t firstId) {
+  
+  systtools::SystMetaData smd;
+  
+  // Define a single parameter for Valencia MEC reweighting
+  systtools::SystParamHeader phdr;
+  if (systtools::ParseFhiclToolConfigurationParameter(ps, "ValenciaMECResponse", phdr, firstId)) {
+    phdr.systParamId = firstId++;
+    smd.push_back(phdr);
   }
+  
+  return smd;
+}
+
+// ---------------------------------------------------------------------------
+bool ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
+    fhicl::ParameterSet const &tool_options) {
+  
+  // Store the metadata for later use
+  systtools::SystMetaData const &md = GetSystMetaData();
+  
+  // This class handles its own response calculation in the constructor
+  // and GetEventResponse method, so just return true
   return true;
 }
 
-//--------------------------------------------------------------------
-// event helpers
-Topology
-ValenciaMECq0q3InterpWeighting::classifyEvent(genie::EventRecord const &ev) const
+// ---------------------------------------------------------------------------
+systtools::event_unit_response_t ValenciaMECq0q3InterpWeighting::GetEventResponse(
+    genie::EventRecord const& ev)
 {
-  for (int i = 0; i < ev.GetEntries(); ++i) {
-  auto const *p = ev.Particle(i); // GHepParticle*
-  if (!p) continue;
-  if (p->Status() == genie::kIStNucleonTarget) {
-    if (p->Pdg() == genie::kPdgClusterNN) return Topology::nn;
-    if (p->Pdg() == genie::kPdgClusterNP) return Topology::np;
-  }
-}
-return Topology::unknown;
-}
-//--------------------------------------------------------------------
-void
-ValenciaMECq0q3InterpWeighting::computeQ0Q3(genie::EventRecord const &ev,
-                                            double &q0,double &q3) const
-{
-  auto *in  = ev.Probe();
-  auto *out = ev.FinalStatePrimaryLepton();
-  if (!in || !out) { q0 = q3 = 0.; return; }
-  TLorentzVector t = *(in->P4()) - *(out->P4());
-  q0 = t.E();
-  q3 = t.Vect().Mag();
-}
-//--------------------------------------------------------------------
-double
-ValenciaMECq0q3InterpWeighting::getInterpolatedWeight(double E,double q0,double q3,
-                                                      Topology topo) const
-{
-  auto itTopo = fCalcs.find(topo);
-  if (itTopo == fCalcs.end()) return 1.0;
-
-  auto const &set = itTopo->second;
-  if (set.empty()) return 1.0;
-
-  // below / above grid
-  if (E <= fEnergies.front())
-    return set.front()
-             ? set.front()->GetVariation(0,set.front()->GetBin({q0,q3})) : 1.0;
-  if (E >= fEnergies.back())
-    return set.back()
-             ? set.back()->GetVariation(0,set.back()->GetBin({q0,q3})) : 1.0;
-
-  // interpolate
-  auto itHi = std::upper_bound(fEnergies.begin(), fEnergies.end(), E);
-  std::size_t iHi = itHi - fEnergies.begin();
-  std::size_t iLo = iHi - 1;
-
-  double wLo = set[iLo]
-                 ? set[iLo]->GetVariation(0,set[iLo]->GetBin({q0,q3})) : 1.0;
-  double wHi = set[iHi]
-                 ? set[iHi]->GetVariation(0,set[iHi]->GetBin({q0,q3})) : 1.0;
-
-  double t = (E - fEnergies[iLo]) / (fEnergies[iHi] - fEnergies[iLo]);
-  double w = (1. - t) * wLo + t * wHi;
-  return std::clamp(w, fWeightLimits.first, fWeightLimits.second);
-}
-
-//--------------------------------------------------------------------
-// main event-response
-event_unit_response_t
-ValenciaMECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const &ev)
-{
-  event_unit_response_t r;
-  auto const &meta = GetSystMetaData();
-  if (meta.empty()) return r;
-  paramId_t pid = meta.front().systParamId;
-  r.push_back({pid,{}});   // create the slot
-
-  // apply only to CC νμ MEC on argon
-  if (!ev.Summary()->ProcInfo().IsWeakCC() ||
-    !ev.Summary()->ProcInfo().IsMEC()     ||
-    (ev.Probe()->Pdg()!=genie::kPdgNuMu && ev.Probe()->Pdg()!=genie::kPdgAntiNuMu) ||
-    (ev.Summary()->InitState().Tgt().Z()!=18) )
-  {
-    r.back().responses = {1.,1.,1.};
-    return r;
+  // ---  classify topology -------------------------------------------------
+  const Topo topo = ClassifyEvent(ev);
+  if (topo == Topo::unknown) {
+    // Return response for this parameter ID with default response
+    systtools::event_unit_response_t response;
+    if (!this->GetSystMetaData().empty()) {
+      systtools::ParamResponses pr;
+      pr.pid = this->GetSystMetaData()[0].systParamId;
+      pr.responses = {1.0, 1.0, 1.0};  // down, central, up
+      response.push_back(pr);
+    }
+    return response;
   }
 
-  double q0,q3; computeQ0Q3(ev,q0,q3);
-  double E = ev.Probe()->P4()->E();
-  double wCV = getInterpolatedWeight(E,q0,q3,classifyEvent(ev));
+  // ---  compute kinematics -------------------------------------------------
+  double q0, q3, Enu;
+  ComputeQ0Q3(ev, q0, q3, Enu);
 
-  double wUp = wCV;
-  double wDn = (wCV>0) ? (2. - wCV) : 1.0;
-  r.back().responses = {wDn,wCV,wUp};
-  return r;
+  // ---  find bracketing energy indices ------------------------------------
+  auto it_high = std::lower_bound(fEgrid.begin(), fEgrid.end(), Enu);
+  size_t i_high = (it_high == fEgrid.end() ? fEgrid.size() - 1
+                                           : std::distance(fEgrid.begin(), it_high));
+  size_t i_low  = (i_high == 0 ? 0 : i_high - 1);
+  const double Elo = fEgrid[i_low];
+  const double Ehi = fEgrid[i_high];
+  const double t   = (Ehi > Elo) ? (Enu - Elo) / (Ehi - Elo) : 0.0;
+
+  // ---  bilinear map lookup + linear blend --------------------------------
+  const auto& vec = fCalcs.at(topo);
+  double w_lo = vec[i_low ]->GetCentralWeight(q0, q3);
+  double w_hi = vec[i_high]->GetCentralWeight(q0, q3);
+  double w_cv = (1.0 - t) * w_lo + t * w_hi;
+  double w_up = std::clamp(2.0 - w_cv, fWmin, fWmax);
+  double w_dn = w_up; // symmetric
+
+  // Package into the expected response format
+  systtools::event_unit_response_t response;
+  if (!this->GetSystMetaData().empty()) {
+    systtools::ParamResponses pr;
+    pr.pid = this->GetSystMetaData()[0].systParamId;
+    pr.responses = {w_dn, w_cv, w_up};
+    response.push_back(pr);
+  }
+  return response;
 }
-//--------------------------------------------------------------------
-} // namespace nusyst
+
+/*******************************************************************************
+ *  Additional helper implementations for ValenciaMECq0q3InterpWeighting_tool.cc
+ *  This file contains the implementation of methods for extracting kinematics
+ *  and classifying event topologies.
+ ******************************************************************************/
+
+// ---------------------------------------------------------------------------
+//  Extract (q0, q3, Enu) from the GENIE event.
+// ---------------------------------------------------------------------------
+void ValenciaMECq0q3InterpWeighting::ComputeQ0Q3(genie::EventRecord const& ev,
+                                                 double& q0, double& q3,
+                                                 double& Enu)
+{
+    const TLorentzVector p4nu = *ev.Probe()->P4();
+    Enu = p4nu.E();
+
+    const TLorentzVector p4lep = *ev.FinalStatePrimaryLepton()->P4();
+    TLorentzVector qv = p4nu - p4lep;   // four‑vector transfer
+    q0 = qv.E();
+    q3 = qv.P();
+}
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Looks at nucleon-target particles (status kIStNucleonTarget).
+// ---------------------------------------------------------------------------
+ValenciaMECq0q3InterpWeighting::Topo
+ValenciaMECq0q3InterpWeighting::ClassifyEvent(genie::EventRecord const& ev)
+{
+  for(int i=0;i<ev.GetEntries();++i){
+    const auto* p=ev.Particle(i);
+    if(!p) continue;
+    if(p->Status()!=genie::kIStNucleonTarget) continue;
+    if(p->Pdg()==genie::kPdgClusterNN) return Topo::nn; // 2n cluster
+    if(p->Pdg()==genie::kPdgClusterNP) return Topo::np; // 1n+1p cluster
+  }
+  return Topo::unknown;
+}
