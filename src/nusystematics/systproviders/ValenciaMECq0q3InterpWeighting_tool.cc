@@ -179,11 +179,13 @@ systtools::event_unit_response_t ValenciaMECq0q3InterpWeighting::GetEventRespons
   const double t   = (Ehi > Elo) ? (Enu - Elo) / (Ehi - Elo) : 0.0;
 
   // ---  bilinear map lookup + linear blend --------------------------------
+
   const auto& vec = fCalcs.at(topo);
   double w_lo = vec[i_low ]->GetCentralWeight(q0, q3);
   double w_hi = vec[i_high]->GetCentralWeight(q0, q3);
-  double w_cv = (1.0 - t) * w_lo + t * w_hi; // interpolated central value
-  w_cv = std::clamp(w_cv, fWmin, fWmax);
+  double w_interp = (1.0 - t) * w_lo + t * w_hi; // interpolated central value
+  w_interp = std::clamp(w_interp, fWmin, fWmax);
+  double onesigma = w_interp-1.;
 
   systtools::event_unit_response_t response;
   if (!this->GetSystMetaData().empty()) {
@@ -191,12 +193,12 @@ systtools::event_unit_response_t ValenciaMECq0q3InterpWeighting::GetEventRespons
     systtools::ParamResponses pr;
     pr.pid = hdr.systParamId;
     pr.responses.reserve(hdr.paramVariations.size());
-    double delta = w_cv - 1.0; // deviation from unity
+    double delta = w_interp - 1.0; // deviation from unity
     if (std::abs(delta) < 1e-12) delta = 0.0; // guard tiny noise
     for (double d : hdr.paramVariations) {
-      double w = w_cv + d * delta; // linear scaling around unity keeping d=0 => w_cv
-      w = std::clamp(w, fWmin, fWmax);
-      pr.responses.push_back(w);
+      double this_rw = 1.0 + d * onesigma;
+      this_rw = std::clamp(this_rw, fWmin, fWmax);
+      pr.responses.push_back(this_rw);
     }
     response.push_back(pr);
   }
