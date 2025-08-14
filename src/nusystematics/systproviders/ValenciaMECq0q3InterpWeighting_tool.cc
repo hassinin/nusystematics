@@ -18,37 +18,62 @@
 #include "Framework/GHEP/GHepStatus.h"
 #include "Framework/ParticleData/PDGCodes.h"
 
+using namespace systtools;
 using namespace nusyst;
+using namespace fhicl;
 
-// ---------------------------------------------------------------------------
 ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
     const fhicl::ParameterSet& p)
-  : IGENIESystProvider_tool(p)  // Call base class constructor
-{
+  : IGENIESystProvider_tool(p) {}
+
+SystMetaData ValenciaMECq0q3InterpWeighting::BuildSystMetaData(
+    fhicl::ParameterSet const &ps, systtools::paramId_t firstId) {
+
+  std::cout << "[ValenciaMECq0q3InterpWeighting::BuildSystMetaData] Called" << std::endl;
+
+  SystMetaData smd;
+
+  systtools::SystParamHeader phdr;
+  if (ParseFhiclToolConfigurationParameter(ps, "ValenciaMECResponse",
+                                                 phdr, firstId)) {
+    phdr.systParamId = firstId++;
+    smd.push_back(phdr);
+  }
+
+  fhicl::ParameterSet templateManifest =
+      ps.get<fhicl::ParameterSet>("ValenciaMECResponse_input_manifest");
+  tool_options.put("ValenciaMECResponse_input_manifest", templateManifest);
+
+  return smd;
+
+}
+
+bool ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
+    fhicl::ParameterSet const &tool_options) {
+
+  std::cout << "[ValenciaMECq0q3InterpWeighting::SetupResponseCalculator] Called" << std::endl;
+
+  fhicl::ParameterSet templateManifest =
+      tool_options.get<fhicl::ParameterSet>("ValenciaMECResponse_input_manifest");
+
   // ---------------------------------------------------------------------
   // Energy grid: support either new key "EnergyGrid" or legacy "Energies"
   // ---------------------------------------------------------------------
-  if (p.has_key("EnergyGrid")) {
-    fEgrid = p.get<std::vector<double>>("EnergyGrid");
-  } else if (p.has_key("Energies")) {
-    fEgrid = p.get<std::vector<double>>("Energies");
-  } else {
-    throw std::runtime_error("ValenciaMECq0q3InterpWeighting: Need EnergyGrid (or legacy Energies) in config");
+  if (templateManifest.has_key("EnergyGrid")) {
+    fEgrid = templateManifest.get<std::vector<double>>("EnergyGrid");
+  }
+  else{
+    throw std::runtime_error("ValenciaMECq0q3InterpWeighting: Need EnergyGrid in config");
   }
   if (fEgrid.empty()) throw std::runtime_error("ValenciaMECq0q3InterpWeighting: Provided energy grid is empty");
 
   // ---------------------------------------------------------------------
-  // Weight limits: support table WeightLimits: { min: X, max: Y } OR list
   // WeightLimits : [ X , Y ]
   // ---------------------------------------------------------------------
-  fWmin = 0.0; fWmax = 5.0; // defaults
-  if (p.has_key("WeightLimits.min") || p.has_key("WeightLimits.max")) {
-    fWmin = p.get<double>("WeightLimits.min", fWmin);
-    fWmax = p.get<double>("WeightLimits.max", fWmax);
-  } else if (p.has_key("WeightLimits")) {
+  if (templateManifest.has_key("WeightLimits")) {
     try {
       // Try as table first (above would have caught min/max), so interpret as sequence
-      std::vector<double> wl = p.get<std::vector<double>>("WeightLimits");
+      std::vector<double> wl = templateManifest.get<std::vector<double>>("WeightLimits");
       if (wl.size() >= 2) { fWmin = wl.front(); fWmax = wl.back(); }
     } catch (...) {
       // fall back silently, keep defaults
@@ -62,8 +87,8 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
   //  (A) Single WeightFile containing all h_weights_map_[np/nn]_X.YGeV
   //  (B) Arrays np_files / nn_files each parallel to energy grid
   // ---------------------------------------------------------------------
-  bool haveSingle = p.has_key("WeightFile");
-  bool haveArrays = p.has_key("np_files") && p.has_key("nn_files");
+  bool haveSingle = templateManifest.has_key("WeightFile");
+  bool haveArrays = templateManifest.has_key("np_files") && templateManifest.has_key("nn_files");
   if (!haveSingle && !haveArrays) {
     throw std::runtime_error("ValenciaMECq0q3InterpWeighting: Need either WeightFile or (np_files & nn_files)");
   }
@@ -73,7 +98,7 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
   }
 
   if (haveSingle) {
-    const std::string fname = p.get<std::string>("WeightFile");
+    const std::string fname = templateManifest.get<std::string>("WeightFile");
     TFile f(fname.c_str(), "READ");
     if (!f.IsOpen()) throw std::runtime_error("Cannot open WeightFile " + fname);
     for (Topo topo : {Topo::np, Topo::nn}) {
@@ -89,8 +114,8 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
       }
     }
   } else { // haveArrays
-    auto np_files = p.get<std::vector<std::string>>("np_files");
-    auto nn_files = p.get<std::vector<std::string>>("nn_files");
+    auto np_files = templateManifest.get<std::vector<std::string>>("np_files");
+    auto nn_files = templateManifest.get<std::vector<std::string>>("nn_files");
     if (np_files.size() != fEgrid.size() || nn_files.size() != fEgrid.size()) {
       throw std::runtime_error("ValenciaMECq0q3InterpWeighting: np_files/nn_files size must match energy grid size");
     }
@@ -125,42 +150,9 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
     load(np_files, Topo::np);
     load(nn_files, Topo::nn);
   }
-}
 
-// ---------------------------------------------------------------------------
-systtools::SystMetaData ValenciaMECq0q3InterpWeighting::BuildSystMetaData(
-    fhicl::ParameterSet const &ps, systtools::paramId_t firstId) {
-  
-  systtools::SystMetaData smd;
-  
-  // Define a single parameter for Valencia MEC reweighting
-  systtools::SystParamHeader phdr;
-  // Prefer new key ValenciaMECResponse; fall back to legacy ValenciaMEC_q0q3Interp
-  if (systtools::ParseFhiclToolConfigurationParameter(ps, "ValenciaMECResponse", phdr, firstId) ||
-      systtools::ParseFhiclToolConfigurationParameter(ps, "ValenciaMEC_q0q3Interp", phdr, firstId)) {
-    phdr.systParamId = firstId++;
-    // If no prettyName provided, set a reasonable default
-    if (phdr.prettyName.empty()) phdr.prettyName = "ValenciaMEC q0q3 Interp";
-    smd.push_back(phdr);
-  } else {
-    // Optional parameter: if absent, tool will yield unity weights (no variations)
-    std::cerr << "[ValenciaMECq0q3InterpWeighting] Warning: No ValenciaMECResponse (or legacy"
-              << " ValenciaMEC_q0q3Interp) parameter header provided; returning unity weights." << std::endl;
-  }
-  
-  return smd;
-}
-
-// ---------------------------------------------------------------------------
-bool ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
-    fhicl::ParameterSet const &tool_options) {
-  
-  // Store the metadata for later use
-  systtools::SystMetaData const &md = GetSystMetaData();
-  
-  // This class handles its own response calculation in the constructor
-  // and GetEventResponse method, so just return true
   return true;
+
 }
 
 // ---------------------------------------------------------------------------
@@ -170,15 +162,7 @@ systtools::event_unit_response_t ValenciaMECq0q3InterpWeighting::GetEventRespons
   // ---  classify topology -------------------------------------------------
   const Topo topo = ClassifyEvent(ev);
   if (topo == Topo::unknown) {
-    // Return response for this parameter ID with default response
-    systtools::event_unit_response_t response;
-    if (!this->GetSystMetaData().empty()) {
-      systtools::ParamResponses pr;
-      pr.pid = this->GetSystMetaData()[0].systParamId;
-      pr.responses = {1.0, 1.0, 1.0};  // down, central, up
-      response.push_back(pr);
-    }
-    return response;
+    this->GetDefaultEventResponse();
   }
 
   // ---  compute kinematics -------------------------------------------------
