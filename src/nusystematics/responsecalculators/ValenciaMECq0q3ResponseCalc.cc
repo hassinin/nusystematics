@@ -28,8 +28,18 @@ inline double clamp(double x, double a, double b) {
 // ---------------------------------------------------------------------------
 double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3) const
 {
-  // TH2::Interpolate is bilinear by default.  Axis order = (x=q3,y=q0).
-  const double w = fHist->Interpolate(q3, q0);
+  // Histogram axis order = (x = q3, y = q0)
+  const double xMin = fHist->GetXaxis()->GetXmin();
+  const double xMax = fHist->GetXaxis()->GetXmax();
+  const double yMin = fHist->GetYaxis()->GetXmin();
+  const double yMax = fHist->GetYaxis()->GetXmax();
+
+  // If kinematics fall outside trained / provided map domain, return neutral weight
+  if (q3 < xMin || q3 > xMax || q0 < yMin || q0 > yMax) {
+    return 1.0; // do not extrapolate beyond Valencia map coverage
+  }
+
+  const double w = fHist->Interpolate(q3, q0); // bilinear inside domain
   return clamp(w, fWmin, fWmax);
 }
 
