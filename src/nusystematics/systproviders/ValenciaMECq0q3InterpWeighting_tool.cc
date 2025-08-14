@@ -74,6 +74,7 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
 
   if (haveSingle) {
     const std::string fname = p.get<std::string>("WeightFile");
+  fToolOptions.put("WeightFile", fname);
     TFile f(fname.c_str(), "READ");
     if (!f.IsOpen()) throw std::runtime_error("Cannot open WeightFile " + fname);
     for (Topo topo : {Topo::np, Topo::nn}) {
@@ -91,6 +92,8 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
   } else { // haveArrays
     auto np_files = p.get<std::vector<std::string>>("np_files");
     auto nn_files = p.get<std::vector<std::string>>("nn_files");
+  fToolOptions.put("np_files", np_files);
+  fToolOptions.put("nn_files", nn_files);
     if (np_files.size() != fEgrid.size() || nn_files.size() != fEgrid.size()) {
       throw std::runtime_error("ValenciaMECq0q3InterpWeighting: np_files/nn_files size must match energy grid size");
     }
@@ -125,6 +128,11 @@ ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
     load(np_files, Topo::np);
     load(nn_files, Topo::nn);
   }
+
+  // Store common options
+  fToolOptions.put("Energies", fEgrid);
+  // Preserve original WeightLimits form for output (vector)
+  fToolOptions.put("WeightLimits", std::vector<double>{fWmin, fWmax});
 }
 
 // ---------------------------------------------------------------------------
