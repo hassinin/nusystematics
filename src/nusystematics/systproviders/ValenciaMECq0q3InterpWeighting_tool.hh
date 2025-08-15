@@ -19,10 +19,6 @@ public:
   bool SetupResponseCalculator(fhicl::ParameterSet const &);
   systtools::event_unit_response_t GetEventResponse(genie::EventRecord const& ev) override;
 
-  // Pass through any extra configuration needed at runtime into the
-  // parameter header file (serialized under tool_options)
-  fhicl::ParameterSet GetExtraToolOptions() { return fToolOptions; }
-
 private:
   enum class Topo { np = 0, nn = 1, unknown = 2 };
   static Topo  ClassifyEvent(genie::EventRecord const&);
@@ -33,7 +29,6 @@ private:
   double                                              fWmin, fWmax;
   std::unordered_map<Topo,
       std::vector<std::unique_ptr<ValenciaMECq0q3ResponseCalc>>> fCalcs;
-  fhicl::ParameterSet                                 fToolOptions;
 };
 
 } // namespace nusyst
