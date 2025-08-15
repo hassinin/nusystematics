@@ -162,7 +162,7 @@ systtools::event_unit_response_t ValenciaMECq0q3InterpWeighting::GetEventRespons
   // ---  classify topology -------------------------------------------------
   const Topo topo = ClassifyEvent(ev);
   if (topo == Topo::unknown) {
-    this->GetDefaultEventResponse();
+    return this->GetDefaultEventResponse();
   }
 
   // ---  compute kinematics -------------------------------------------------
