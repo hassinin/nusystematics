@@ -13,7 +13,6 @@ SET(SYSTP_IMPLFILES
   FSIReweight_tool.cc
   WSReweight_tool.cc
   ValenciaMECq0q3InterpWeighting_tool.cc
-  ../responsecalculators/ValenciaMECq0q3ResponseCalc.cc
   )
 
 if(GENIEReWeight_ENABLED)
@@ -54,27 +53,13 @@ if(GENIEReWeight_ENABLED)
 endif()
 
 add_library(nusystematics_systproviders SHARED ${SYSTP_IMPLFILES})
-# bring in the SystematicTools headers so REGISTER_SYST_PROVIDER() is defined
-target_include_directories(nusystematics_systproviders
-  PUBLIC
-    $<TARGET_PROPERTY:systematicstools_interface,INTERFACE_INCLUDE_DIRECTORIES>
-)
 add_library(nusyst::systproviders ALIAS nusystematics_systproviders)
-
-# Add GENIE include directory directly (UPS setup version)
-target_include_directories(nusystematics_systproviders PUBLIC /cvmfs/larsoft.opensciencegrid.org/products/genie/v3_06_00/Linux64bit+3.10-2.17-e26-prof/include/GENIE/Framework/EventGen)
 
 set_target_properties(nusystematics_systproviders PROPERTIES 
   PUBLIC_HEADER "${SYSTP_HDRFILES}"
   EXPORT_NAME systproviders )
 
-target_link_libraries(nusystematics_systproviders
-  PRIVATE
-    systematicstools_interface
-    nusyst::responsecalculators
-    systtools::all
-    Eigen3::Eigen
-)
+target_link_libraries(nusystematics_systproviders PUBLIC nusyst::responsecalculators systtools::all Eigen3::Eigen)
 
 install(TARGETS nusystematics_systproviders
     EXPORT nusyst-targets
