@@ -44,7 +44,7 @@ inline double clamp(double x, double a, double b) {
 }
 
 // ---------------------------------------------------------------------------
-double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3) const
+inline double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3) const
 {
 
   // Histogram axis order = (x = q3, y = q0)
@@ -64,7 +64,7 @@ double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3) const
 }
 
 // ---------------------------------------------------------------------------
-double ValenciaMECq0q3ResponseCalc::GetVariation(int ivar,
+inline double ValenciaMECq0q3ResponseCalc::GetVariation(int ivar,
                                                  double q0, double q3) const
 {
   if (ivar == 0) return GetCentralWeight(q0, q3);
