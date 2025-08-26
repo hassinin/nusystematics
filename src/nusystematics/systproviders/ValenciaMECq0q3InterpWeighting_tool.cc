@@ -82,6 +82,20 @@ bool ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(
   if (fWmin <= 0.0) fWmin = 0.000; // guard against zero for reciprocal ops later if any
   if (fWmax < fWmin) std::swap(fWmin, fWmax);
 
+  // ---- NEW: q0 gate configuration -----------------------------------------
+  // Users may specify either:
+  //   Q0Window: [min, max]
+  // or the separate keys:
+  //   Q0Min: <double>
+  //   Q0Max: <double>
+  if (templateManifest.has_key("Q0Window")) {
+    auto w = templateManifest.get<std::vector<double>>("Q0Window");
+    if (w.size() >= 2) { fQ0min = w.front(); fQ0max = w.back(); }
+  }
+  if (templateManifest.has_key("Q0Min")) fQ0min = templateManifest.get<double>("Q0Min");
+  if (templateManifest.has_key("Q0Max")) fQ0max = templateManifest.get<double>("Q0Max");
+  if (fQ0max < fQ0min) std::swap(fQ0min, fQ0max);
+
   // ---------------------------------------------------------------------
   // Histogram sourcing strategies:
   //  (A) Single WeightFile containing all h_weights_map_[np/nn]_X.YGeV

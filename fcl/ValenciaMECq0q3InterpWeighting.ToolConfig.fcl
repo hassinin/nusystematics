@@ -18,7 +18,8 @@ ValenciaInterp: {
 
     # Weight limits (min, max)
     WeightLimits : [0.0, 5.0]
-
+    Q0Window: [0.05, 1.20]
+    
     np_files : [
       "${nusystematics_ROOT}/data/ValenciaMECq0q3/reweight_combined_np_0.4GeV.root",
       "${nusystematics_ROOT}/data/ValenciaMECq0q3/reweight_combined_np_0.5GeV.root",

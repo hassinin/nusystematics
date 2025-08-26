@@ -29,6 +29,10 @@ private:
   std::vector<double> fEgrid; ///< GeV
   double fWmin{0.0};
   double fWmax{5.0};
+// Optional q0 gate: apply weights only if (fQ0min < q0 < fQ0max).
+// Defaults keep the gate disabled.
+  double fQ0min{-1e9};
+  double fQ0max{+1e9};
   std::unordered_map<Topo,
       std::vector<std::unique_ptr<ValenciaMECq0q3ResponseCalc>>> fCalcs;
 };

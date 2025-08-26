@@ -55,7 +55,7 @@ inline double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3
 
   // If kinematics fall outside trained / provided map domain, return neutral weight
   if (q3 < xMin || q3 > xMax || q0 < yMin || q0 > yMax) {
-    return 1.0; // do not extrapolate beyond Valencia map coverage
+    return 0.0; // do not extrapolate beyond Valencia map coverage
   }
 
   const double w = fHist->Interpolate(q3, q0); // bilinear inside domain
