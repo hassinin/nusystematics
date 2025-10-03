@@ -57,9 +57,21 @@ namespace nusyst {
 	Q3_GeV < *(Q3_bins.begin()) || Q3_GeV > *(Q3_bins.end()-1) ) return 1.0;
 
     // Seek out the bin and return it
+
+    std::vector<double>::iterator it_enu = Enu_bins.begin();
+    std::vector<double>::iterator it_q0  = Q0_bins.begin();
+    std::vector<double>::iterator it_q3  = Q3_bins.begin();
+    
+    while( it_enu < Enu_bins.end() && Enu_GeV >= *it_enu ){ ++it_enu; } --it_enu;
+    while( it_q0 < Q0_bins.end() && Q0_GeV >= (*it_q0) ){ ++it_q0; } --it_q0;
+    while( it_q3 < Q3_bins.end() && Q3_GeV >= (*it_q3) ){ ++it_q3; } --it_q3;
+
+    int bin_enu = it_enu - Enu_bins.begin();
+    int bin_q0  = it_q0  -  Q0_bins.begin();
+    int bin_q3  = it_q3  -  Q3_bins.begin();
     switch(pdg) {
     case 14:
-      return numu_ratio_histogram.GetBinContent( numu_ratio_histogram.GetBin( Enu_GeV, Q0_GeV, Q3_GeV ) );
+      return numu_ratio_histogram.GetBinContent( bin_enu, bin_q0, bin_q3 );
     default: // RETHERE: to add
       return 1.0;
     } // switch pdg
@@ -96,11 +108,11 @@ namespace nusyst {
       if( flavour_name == "numu" ){
 	numu_ratio_histogram = *(GetHistogram<TH3D>( input_file, input_hist ));
       }
-      TH1D hEnu_bins = *(GetHistogram<TH1D>( input_file, "hEnu_bins" ));
-      TH1D hQ0_bins  = *(GetHistogram<TH1D>( input_file, "hQ0_bins" ));
-      TH1D hQ3_bins  = *(GetHistogram<TH1D>( input_file, "hQ3_bins" ));
+      TH1D hEnu_bins = *(GetHistogram<TH1D>( input_file, "hEnuBins" ));
+      TH1D hQ0_bins  = *(GetHistogram<TH1D>( input_file, "hQ0Bins" ));
+      TH1D hQ3_bins  = *(GetHistogram<TH1D>( input_file, "hQ3Bins" ));
 
-      for( Int_t ib = 1; ib <= hEnu_bins.GetNbinsX(); ib++ ) 
+      for( Int_t ib = 1; ib <= hEnu_bins.GetNbinsX(); ib++ )
 	Enu_bins.emplace_back( hEnu_bins.GetBinLowEdge(ib) );
       for( Int_t ib = 1; ib <= hQ0_bins.GetNbinsX(); ib++ ) 
 	Q0_bins.emplace_back( hQ0_bins.GetBinLowEdge(ib) );

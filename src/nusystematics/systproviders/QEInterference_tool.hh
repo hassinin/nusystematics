@@ -14,7 +14,7 @@
 #include <string>
 
 /*
- * \class QEInterferenceWeight
+ * \class QEInterference
  *
  * \brief A weighting tool that applies the ratio of ACHILLES-derived cross sections:
  *        --> Numerator: Xsec with the 1p1h + 2p2h interference term
@@ -29,13 +29,13 @@
  *          Gray Putnam <putnam@fnal.gov>
  */
 
-class QEInterferenceWeight : public nusyst::IGENIESystProvider_tool {
+class QEInterference : public nusyst::IGENIESystProvider_tool {
 
   std::unique_ptr<nusyst::QEInterferenceResponseCalculator> QEIntfResponseCalculator;
 
 public:
-  explicit QEInterferenceWeight(fhicl::ParameterSet const & ps);
-  ~QEInterferenceWeight();
+  explicit QEInterference(fhicl::ParameterSet const & ps);
+  ~QEInterference();
   
   bool SetupResponseCalculator(fhicl::ParameterSet const &);
 
@@ -57,4 +57,4 @@ private:
   int nu_pdg;
   double Enu, Q0, Q3;
 
-}; // class QEInterferenceWeight
+}; // class QEInterference

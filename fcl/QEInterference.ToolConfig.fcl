@@ -1,0 +1,21 @@
+ QEInterference_toolconfig: {
+    tool_type: "QEInterference"
+    instance_name: "QEInterference"
+
+    #QEInterference_variation_descriptor: "(0,1,0.5)" # "[0, 1]" maybe?
+    QEInterference_variation_descriptor: "[0, 1]"
+
+    verbosity_level: 5
+
+    QEInterference_input_manifest: {
+      input_file: "ACHILLES_weights.root"
+      inputs: [
+          {
+	    name: "numu"
+	    input_hist: "hEnuQ0Q3_numu"
+	  }
+      ]
+}   
+  }
+
+syst_providers: [QEInterference_toolconfig]

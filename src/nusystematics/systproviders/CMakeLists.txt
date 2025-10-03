@@ -12,7 +12,7 @@ SET(SYSTP_IMPLFILES
   CCQERPAReweight_tool.cc
   FSIReweight_tool.cc
   WSReweight_tool.cc
-  QEInterferenceWeight_tool.cc
+  QEInterference_tool.cc
   )
 
 if(GENIEReWeight_ENABLED)
@@ -38,7 +38,7 @@ SET(SYSTP_HDRFILES
   CCQERPAReweight_tool.hh
   FSIReweight_tool.hh
   WSReweight_tool.hh
-  QEInterferenceWeight_tool.hh
+  QEInterference_tool.hh
 )
 
 if(GENIEReWeight_ENABLED)

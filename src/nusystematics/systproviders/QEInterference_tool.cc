@@ -1,4 +1,4 @@
-#include "nusystematics/systproviders/QEInterferenceWeight_tool.hh"
+#include "nusystematics/systproviders/QEInterference_tool.hh"
 #include "nusystematics/utility/exceptions.hh"
 #include "systematicstools/utility/FHiCLSystParamHeaderUtility.hh"
 #include "Framework/GHEP/GHepParticle.h"
@@ -7,14 +7,14 @@ using namespace systtools;
 using namespace nusyst;
 using namespace fhicl;
 
-QEInterferenceWeight::QEInterferenceWeight(ParameterSet const & ps) :
+QEInterference::QEInterference(ParameterSet const & ps) :
   IGENIESystProvider_tool(ps),
   QEIntfResponseCalculator(nullptr),
   ResponseParameterIdx(kParamUnhandled<size_t>) {}
 
-QEInterferenceWeight::~QEInterferenceWeight() {}
+QEInterference::~QEInterference() {}
 
-bool QEInterferenceWeight::SetupResponseCalculator(ParameterSet const & tool_options)
+bool QEInterference::SetupResponseCalculator(ParameterSet const & tool_options)
 {
   // Silence GENIE
   genie::Messenger::Instance()->SetPrioritiesFromXmlFile("Messenger_whisper.xml");
@@ -22,69 +22,72 @@ bool QEInterferenceWeight::SetupResponseCalculator(ParameterSet const & tool_opt
   //                                               log4cpp::Priority::FATAL);
 
   // Check the metadata makes sense
-  if (!HasParam(GetSystMetaData(), "QEInterferenceWeight")) {
+  if (!HasParam(GetSystMetaData(), "QEInterference")) {
     throw incorrectly_configured()
         << "[ERROR]: Expected to find parameter named "
-        << std::quoted("QEInterferenceWeight");
+        << std::quoted("QEInterference");
   }
 
   // Get manifests for options
-  if (!tool_options.has_key("QEInterferenceWeight_input_manifest")) {
+  if (!tool_options.has_key("QEInterference_input_manifest")) {
     throw systtools::invalid_ToolOptions()
-        << "[ERROR]: QEInterferenceWeight parameter exists in the "
+        << "[ERROR]: QEInterference parameter exists in the "
            "SystMetaData, but "
-           "no QEInterferenceWeight_input_manifest key can be found on the "
+           "no QEInterference_input_manifest key can be found on the "
            "tool_options table. This reweighting requires input histograms "
            "that must be specified. This should have been caught by  "
-           "QEInterferenceWeight::BuildSystMetaData, but wasn't, this is a "
+           "QEInterference::BuildSystMetaData, but wasn't, this is a "
            "bug, "
            "please report to the maintainer.";
   }
 
   fhicl::ParameterSet const &templateManifest =
       tool_options.get<fhicl::ParameterSet>(
-          "QEInterferenceWeight_input_manifest");
+          "QEInterference_input_manifest");
 
   ResponseParameterIdx =
-      GetParamIndex(GetSystMetaData(), "QEInterferenceWeight");
+      GetParamIndex(GetSystMetaData(), "QEInterference");
+
+  // Initialise the calculator
+  QEIntfResponseCalculator = std::make_unique<QEInterferenceResponseCalculator>(templateManifest);
 
   return true;
 }
 
-SystMetaData QEInterferenceWeight::BuildSystMetaData(ParameterSet const & cfg,
+SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
 						     paramId_t id) 
 {
   SystMetaData smd;
 
   SystParamHeader phdr;
-  if (ParseFhiclToolConfigurationParameter(cfg, "QEInterferenceWeight",
+  if (ParseFhiclToolConfigurationParameter(cfg, "QEInterference",
                                                  phdr, id)) {
     phdr.systParamId = id++;
     smd.push_back(phdr);
   }
 
   ParameterSet templateManifest =
-      cfg.get<ParameterSet>("QEInterferenceWeight_input_manifest");
+      cfg.get<ParameterSet>("QEInterference_input_manifest");
 
-  if (!cfg.has_key("QEInterferenceWeight_input_manifest") ||
-      !cfg.is_key_to_table("QEInterferenceWeight_input_manifest")) {
+  if (!cfg.has_key("QEInterference_input_manifest") ||
+      !cfg.is_key_to_table("QEInterference_input_manifest")) {
     throw invalid_ToolConfigurationFHiCL()
         << "[ERROR]: When configuring calculated variations for "
-           "QEInterferenceWeight, expected to find a FHiCL table keyed by "
-           "QEInterferenceWeight_input_manifest describing the location of "
+           "QEInterference, expected to find a FHiCL table keyed by "
+           "QEInterference_input_manifest describing the location of "
            "the histogram inputs. See "
            "nusystematics/responsecalculators/"
            "TemplateResponseCalculatorBase.hh for the layout.";
   }
 
-  tool_options.put("QEInterferenceWeight_input_manifest", templateManifest);
+  tool_options.put("QEInterference_input_manifest", templateManifest);
 
   return smd;
 }
 
-std::string QEInterferenceWeight::AsString() { return "QEInterferenceWeight"; }
+std::string QEInterference::AsString() { return "QEInterference"; }
 
-event_unit_response_t QEInterferenceWeight::GetEventResponse(genie::EventRecord const & ev) 
+event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const & ev) 
 { 
   // Anything but QE is not handled and should be default
   // Use GetDefaultEventResponse() to return an auto-1.-filled vector
@@ -122,7 +125,7 @@ event_unit_response_t QEInterferenceWeight::GetEventResponse(genie::EventRecord 
 
   resp.push_back( {hdr.systParamId, {}} );
   for (double var : hdr.paramVariations) {
-    double this_reweight = QEIntfResponseCalculator->GetWeight( pdg, Enu, Q0, Q3 );
+    double this_reweight = (1-var) + var * QEIntfResponseCalculator->GetWeight( pdg, Enu, Q0, Q3 );
     resp.back().responses.push_back( this_reweight );
   }
 
