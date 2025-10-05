@@ -18,6 +18,7 @@ SET(RSPC_HDRFILES
   DIRT2_EmissEngine_Reweight.hh
   CCQERPAReweightCalculator.hh
   CCQECRPAReweightCalculator.hh
+  CCQESFReweightCalculator.hh
   FSIReweightCalculator.hh
 )
 
