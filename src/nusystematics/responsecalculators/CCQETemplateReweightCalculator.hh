@@ -93,16 +93,6 @@ namespace nusyst {
       double xsec_WithTemplate = map_ENuRange_to_WithTemplateXSec[enu_range]->Interpolate(Enu_GeV_ForInterp, kin_Y_ForInterp, kin_Z_ForInterp); // CV
       double xsec_WithoutTemplate = map_ENuRange_to_WithoutTemplateXSec[enu_range]->Interpolate(Enu_GeV_ForInterp, kin_Y_ForInterp, kin_Z_ForInterp);
 
-      // // xsec = 0
-      // if(xsec_WithTemplate==0.){ 
-      //   /*
-      //   printf("[CCQETemplateReweightCalculator::GetTemplateReweight] Zero cross section for\n");
-      //   printf("[CCQETemplateReweightCalculator::GetTemplateReweight] (Enu_GeV, kin_Y, kin_Z) = (%1.3f, %1.3f, %1.3f), enu_range = %d\n", Enu_GeV, bin_kin[0], bin_kin[1], enu_range);
-      //   printf("[CCQETemplateReweightCalculator::GetTemplateReweight] -> (Enu_GeV, kin_Y, kin_Z) = (%1.3f, %1.3f, %1.3f)\n", Enu_GeV_ForInterp, kin_Y_ForInterp, kin_Z_ForInterp);
-      //   */
-      //   return 0.;
-      // }
-
       double weight = ( xsec_WithoutTemplate * (1.-parameter_value) + xsec_WithTemplate * parameter_value ) / xsec_WithoutTemplate;
       // std::cout << "[CCQETemplateReweightCalculator] weight = " << weight << std::endl;
 
@@ -145,7 +135,7 @@ namespace nusyst {
         double xsec_WithoutTemplate_grid = map_ENuRange_to_WithoutTemplateXSec[enu_range]->Interpolate(x_for_interp, y_for_interp, z_for_interp);
 
         double grid_weight = ( xsec_WithoutTemplate_grid * (1.-parameter_value) + xsec_WithTemplate_grid * parameter_value ) / xsec_WithoutTemplate_grid;
-        if(grid_weight == grid_weight) { // not nan
+        if(grid_weight == grid_weight) { 
           best_weight = grid_weight;
           found_valid = true;
         } 
@@ -177,7 +167,7 @@ namespace nusyst {
                 double xsec_WithTemplate_try = map_ENuRange_to_WithTemplateXSec[enu_range]->Interpolate(x_for_interp, y_for_interp, z_for_interp);
                 double xsec_WithoutTemplate_try = map_ENuRange_to_WithoutTemplateXSec[enu_range]->Interpolate(x_for_interp, y_for_interp, z_for_interp);
                 double try_weight = ( xsec_WithoutTemplate_try * (1.-parameter_value) + xsec_WithTemplate_try * parameter_value ) / xsec_WithoutTemplate_try;
-                if(try_weight == try_weight) { // not nan
+                if(try_weight == try_weight) { 
                   if(dist < min_dist) {
                     min_dist = dist;
                     best_weight = try_weight;
@@ -201,7 +191,6 @@ namespace nusyst {
       return weight;
     }
 
-  // clip at max Enu
   else if (enu_range == 1){
     return 1.;
     }
