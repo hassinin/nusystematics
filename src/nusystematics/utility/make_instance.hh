@@ -16,8 +16,7 @@
 #include "nusystematics/systproviders/ResIso_tool.hh"
 #include "nusystematics/systproviders/DIRT2_Emiss_tool.hh"
 #include "nusystematics/systproviders/CCQERPAReweight_tool.hh"
-#include "nusystematics/systproviders/CCQECRPAReweight_tool.hh"
-#include "nusystematics/systproviders/CCQESFReweight_tool.hh"
+#include "nusystematics/systproviders/CCQETemplateReweight_tool.hh"
 #include "nusystematics/systproviders/FSIReweight_tool.hh"
 #include "nusystematics/systproviders/WSReweight_tool.hh"
 
@@ -32,7 +31,6 @@ NEW_SYSTTOOLS_EXCEPT(unknown_nusyst_systprovider);
 inline std::unique_ptr<IGENIESystProvider_tool>
 make_instance(fhicl::ParameterSet const &paramset) {
   std::string tool_type = paramset.get<std::string>("tool_type");
-  bool is_SF = tool_type == "CCQESFReweight";
 
   if (tool_type == "GENIEReWeight") {
     return std::make_unique<GENIEReWeight>(paramset);
@@ -62,17 +60,15 @@ make_instance(fhicl::ParameterSet const &paramset) {
     return std::make_unique<ResIso>(paramset);
   } else if (tool_type == "CCQERPAReweight"){
     return std::make_unique<CCQERPAReweight>(paramset);
-  } else if (tool_type == "CCQECRPAReweight"){
-    return std::make_unique<CCQECRPAReweight>(paramset);
-  } else if (tool_type == "CCQESFReweight"){
-    return std::make_unique<CCQESFReweight>(paramset);
+  } else if (tool_type == "CCQETemplateReweight"){
+    return std::make_unique<CCQETemplateReweight>(paramset);
   } else if (tool_type == "FSIReweight"){
     return std::make_unique<FSIReweight>(paramset);
   } else if (tool_type == "WSReweight") {
     return std::make_unique<WSReweight>(paramset);
   } else {
     throw unknown_nusyst_systprovider()
-        << "[ERROR]: Unknown tool type: " << std::quoted(tool_type) << is_SF;
+        << "[ERROR]: Unknown tool type: " << std::quoted(tool_type);
   }
 }
 

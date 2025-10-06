@@ -1,9 +1,9 @@
-#ifndef nusystematics_SYSTPROVIDERS_CCQESFReweight_TOOL_SEEN
-#define nusystematics_SYSTPROVIDERS_CCQESFReweight_TOOL_SEEN
+#ifndef nusystematics_SYSTPROVIDERS_CCQETemplateReweight_TOOL_SEEN
+#define nusystematics_SYSTPROVIDERS_CCQETemplateReweight_TOOL_SEEN
 
 #include "nusystematics/interface/IGENIESystProvider_tool.hh"
 
-#include "nusystematics/responsecalculators/CCQESFReweightCalculator.hh"
+#include "nusystematics/responsecalculators/CCQETemplateReweightCalculator.hh"
 #include "nusystematics/utility/enumclass2int.hh"
 
 #include "nusystematics/utility/GENIEUtils.hh"
@@ -14,7 +14,7 @@
 #include <memory>
 #include <string>
 
-class CCQESFReweight : public nusyst::IGENIESystProvider_tool {
+class CCQETemplateReweight : public nusyst::IGENIESystProvider_tool {
 
   enum RWMode {
     NONE = 0,
@@ -24,10 +24,10 @@ class CCQESFReweight : public nusyst::IGENIESystProvider_tool {
     PTheta = 4
   };
 
-  std::unique_ptr<nusyst::CCQESFReweightCalculator> ccqeSFReweightCalculator;
+  std::unique_ptr<nusyst::CCQETemplateReweightCalculator> ccqeTemplateReweightCalculator;
 
 public:
-  explicit CCQESFReweight(fhicl::ParameterSet const &);
+  explicit CCQETemplateReweight(fhicl::ParameterSet const &);
 
   bool SetupResponseCalculator(fhicl::ParameterSet const &);
 
@@ -40,17 +40,15 @@ public:
 
   std::string AsString();
 
-  ~CCQESFReweight();
+  ~CCQETemplateReweight();
 
 private:
-
 
   fhicl::ParameterSet tool_options;
   RWMode rwMode;
 
   void InitValidTree();
   
-  // Helper function to determine q0 bin index
   int GetQ0BinIndex(double q0_value) const;
 
   bool fill_valid_tree;

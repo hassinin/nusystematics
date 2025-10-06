@@ -1,4 +1,4 @@
-#include "nusystematics/systproviders/CCQESFReweight_tool.hh"
+#include "nusystematics/systproviders/CCQETemplateReweight_tool.hh"
 
 #include "nusystematics/utility/exceptions.hh"
 
@@ -13,11 +13,12 @@ using namespace nusyst;
 using namespace fhicl;
 
 
-CCQESFReweight::CCQESFReweight(ParameterSet const &params)
+CCQETemplateReweight::CCQETemplateReweight(ParameterSet const &params)
     : IGENIESystProvider_tool(params),
-      ccqeSFReweightCalculator(nullptr),
+      ccqeTemplateReweightCalculator(nullptr),
       valid_file(nullptr), valid_tree(nullptr) {
 
+  // knob names
   for (size_t i = 0; i < kNumQ0Bins; ++i) {
       q0bin_params_for_ccqe_sf_names[i] = "q0bin" + std::to_string(i + 1);
   }
@@ -27,33 +28,32 @@ CCQESFReweight::CCQESFReweight(ParameterSet const &params)
   }
 }
 
-SystMetaData CCQESFReweight::BuildSystMetaData(ParameterSet const &cfg,
+SystMetaData CCQETemplateReweight::BuildSystMetaData(ParameterSet const &cfg,
                                                      paramId_t firstId) {
 
-  std::cout << "[CCQESFReweight::BuildSystMetaData] called" << std::endl;
+  std::cout << "[CCQETemplateReweight::BuildSystMetaData] called" << std::endl;
 
   SystMetaData smd;
 
-  // Parse each q0bin parameter
   for (size_t i = 0; i < kNumQ0Bins; ++i) {
     systtools::SystParamHeader phdr;
-    std::cout << "[CCQESFReweight::BuildSystMetaData] Attempting to parse parameter: " 
+    std::cout << "[CCQETemplateReweight::BuildSystMetaData] Attempting to parse parameter: " 
               << q0bin_params_for_ccqe_sf_names[i] << std::endl;
     if (ParseFhiclToolConfigurationParameter(cfg, q0bin_params_for_ccqe_sf_names[i],
                                                    phdr, firstId)) {
       phdr.systParamId = firstId++;
       smd.push_back(phdr);
-      std::cout << "[CCQESFReweight::BuildSystMetaData] Successfully parsed parameter: " 
+      std::cout << "[CCQETemplateReweight::BuildSystMetaData] Successfully parsed parameter: " 
                 << q0bin_params_for_ccqe_sf_names[i] << " with ID: " << phdr.systParamId << std::endl;
     } else {
-      std::cout << "[CCQESFReweight::BuildSystMetaData] Failed to parse parameter: " 
+      std::cout << "[CCQETemplateReweight::BuildSystMetaData] Failed to parse parameter: " 
                 << q0bin_params_for_ccqe_sf_names[i] << std::endl;
     }
   }
 
   fhicl::ParameterSet templateManifest =
-      cfg.get<fhicl::ParameterSet>("CCQESFReweight_input_manifest");
-  tool_options.put("CCQESFReweight_input_manifest", templateManifest);
+      cfg.get<fhicl::ParameterSet>("CCQETemplateReweight_input_manifest");
+  tool_options.put("CCQETemplateReweight_input_manifest", templateManifest);
 
   // OPTION_IN_CONF_FILE can be defined in the configuration file
   // then it is copied to tool_option when running "GenerateSystProviderConfig" to generation paramHeader
@@ -61,18 +61,18 @@ SystMetaData CCQESFReweight::BuildSystMetaData(ParameterSet const &cfg,
   fill_valid_tree = cfg.get<bool>("fill_valid_tree", false);
   tool_options.put("fill_valid_tree", fill_valid_tree);
 
-  std::cout << "[CCQESFReweight::BuildSystMetaData] Total parameters parsed: " << smd.size() << std::endl;
+  std::cout << "[CCQETemplateReweight::BuildSystMetaData] Total parameters parsed: " << smd.size() << std::endl;
 
   return smd;
 }
 
-bool CCQESFReweight::SetupResponseCalculator(
+bool CCQETemplateReweight::SetupResponseCalculator(
     fhicl::ParameterSet const &tool_options) {
 
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] called" << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] called" << std::endl;
 
   fhicl::ParameterSet templateManifest =
-      tool_options.get<fhicl::ParameterSet>("CCQESFReweight_input_manifest");
+      tool_options.get<fhicl::ParameterSet>("CCQETemplateReweight_input_manifest");
 
   std::string rwmode_str = templateManifest.get<std::string>("RWMode");
   std::string kin_Y_str(""), kin_Z_str("");
@@ -102,18 +102,17 @@ bool CCQESFReweight::SetupResponseCalculator(
         << "[ERROR]: RWMode is wrong: " << rwmode_str;
   }
 
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] RWMode: " << rwmode_str << std::endl;
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] Template binnings are" << std::endl;
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] x: E_nu" << std::endl;
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] y: " << kin_Y_str << std::endl;
-  std::cout << "[CCQESFReweight::SetupResponseCalculator] z: " << kin_Z_str << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] RWMode: " << rwmode_str << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] Template binnings are" << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] x: E_nu" << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] y: " << kin_Y_str << std::endl;
+  std::cout << "[CCQETemplateReweight::SetupResponseCalculator] z: " << kin_Z_str << std::endl;
 
-  ccqeSFReweightCalculator = std::make_unique<CCQESFReweightCalculator>( templateManifest );
+  ccqeTemplateReweightCalculator = std::make_unique<CCQETemplateReweightCalculator>( templateManifest );
 
-  // Get parameter indices for each q0bin
   for (size_t i = 0; i < kNumQ0Bins; ++i) {
     ResponseParameterIdx_q0bin[i] = GetParamIndex(GetSystMetaData(), q0bin_params_for_ccqe_sf_names[i]);
-    std::cout << "[CCQESFReweight::SetupResponseCalculator] " << q0bin_params_for_ccqe_sf_names[i] 
+    std::cout << "[CCQETemplateReweight::SetupResponseCalculator] " << q0bin_params_for_ccqe_sf_names[i] 
               << " parameter index: " << ResponseParameterIdx_q0bin[i] << std::endl;
   }
 
@@ -126,7 +125,7 @@ bool CCQESFReweight::SetupResponseCalculator(
 }
 
 event_unit_response_t
-CCQESFReweight::GetEventResponse(genie::EventRecord const &ev) {
+CCQETemplateReweight::GetEventResponse(genie::EventRecord const &ev) {
 
   // when the event is not applicable for this type of reweighting,
   // use GetDefaultEventResponse() to return an auto-1.-filled vector
@@ -177,29 +176,26 @@ CCQESFReweight::GetEventResponse(genie::EventRecord const &ev) {
         << "[ERROR]: RWMode is wrong: " << rwMode;
   }
 
-  // Determine which q0 bin this event falls into
+  // Determine which q0 bin this event belongs to
   double q0_value = emTransfer.E();
   int q0_bin_index = GetQ0BinIndex(q0_value);
-  
-  // Debug output 
-  // std::cout << "[CCQESFReweight::GetEventResponse] q0=" << q0_value 
-  //           << " -> bin " << q0_bin_index << std::endl;
-  
-  // now make the output
+  /*
+  std::cout << "[CCQETemplateReweight::GetEventResponse] q0=" << q0_value 
+            << " -> bin " << q0_bin_index << std::endl;
+  */
+
   systtools::event_unit_response_t resp;
 
-  // Only apply reweighting for the appropriate q0 bin
+  // reweighting for the corresponding q0 bin
   SystParamHeader const &hdr = GetSystMetaData()[ResponseParameterIdx_q0bin[q0_bin_index]];
 
   resp.push_back( {hdr.systParamId, {}} );
   for (double var : hdr.paramVariations) {
-    double this_reweight = ccqeSFReweightCalculator->GetSFReweight( 
+    double this_reweight = ccqeTemplateReweightCalculator->GetTemplateReweight( 
       ISLepP4.E(),
       bin_kin,
       var
     );
-    //std::cout << "var: " << var << std::endl;
-    //std::cout << "this_reweight: " << this_reweight << std::endl;
     resp.back().responses.push_back( this_reweight );
   }
 
@@ -234,35 +230,32 @@ CCQESFReweight::GetEventResponse(genie::EventRecord const &ev) {
 
 }
 
-std::string CCQESFReweight::AsString() { return ""; }
+std::string CCQETemplateReweight::AsString() { return ""; }
 
-int CCQESFReweight::GetQ0BinIndex(double q0_value) const {
+int CCQETemplateReweight::GetQ0BinIndex(double q0_value) const {
 
   double q0_cutoff = (q0_value > q0_bin_boundaries[kNumQ0Bins+1]) ? q0_bin_boundaries[kNumQ0Bins+1] : q0_value;
   
-  // Find which bin this q0 value falls into
   for (size_t i = 0; i < kNumQ0Bins; ++i) {
     if (q0_cutoff >= q0_bin_boundaries[i] && q0_cutoff < q0_bin_boundaries[i + 1]) {
-      // std::cout << "[CCQESFReweight::GetQ0BinIndex] q0=" << q0_value 
-      //           << " -> bin " << i << std::endl;
       return static_cast<int>(i);
     }
   }
   
-  // last bin is overflow bin
   if (q0_cutoff >= q0_bin_boundaries[kNumQ0Bins+1]) {
     return kNumQ0Bins;
   }
   
-  // Fallback (shoulnt happen)
-  // std::cout << "[CCQESFReweight::GetQ0BinIndex] WARNING: q0=" << q0_value 
-  //           << " (cutoff=" << q0_cutoff << ") not in any bin, using bin 0" << std::endl;
+  // Fallback 
+  // TODO: shouldn't happen -- but should we add a handler?
+  std::cout << "[CCQETemplateReweight::GetQ0BinIndex] WARNING: q0=" << q0_value 
+            << " (cutoff=" << q0_cutoff << ") not in any bin, using bin 0" << std::endl;
   return 0;
 }
 
-void CCQESFReweight::InitValidTree() {
+void CCQETemplateReweight::InitValidTree() {
 
-  valid_file = new TFile("MINERvAq3q0WeightValid.root", "RECREATE");
+  valid_file = new TFile("CCQETemplateReweight.root", "RECREATE");
   valid_tree = new TTree("valid_tree", "");
 
   valid_tree->Branch("NEUTMode", &NEUTMode);
@@ -278,7 +271,7 @@ void CCQESFReweight::InitValidTree() {
   valid_tree->Branch("q3", &q3);
 }
 
-CCQESFReweight::~CCQESFReweight() {
+CCQETemplateReweight::~CCQETemplateReweight() {
   if (valid_file) {
     valid_tree->SetDirectory(valid_file);
     valid_file->Write();
