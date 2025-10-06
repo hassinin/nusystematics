@@ -43,18 +43,45 @@ namespace nusyst {
 
   private:
 
-    // RETHERE: different bins per flavour?
-    std::vector<double> Enu_bins, Q0_bins, Q3_bins;
-    TH3D numu_ratio_histogram;
+    // The bins in each variable are in principle different. Fill these out per flavour
+    std::vector<std::pair<int, std::vector<double>>> Enu_bin_collection;
+    std::vector<std::pair<int, std::vector<double>>>  Q0_bin_collection;
+    std::vector<std::pair<int, std::vector<double>>>  Q3_bin_collection;
+    std::vector<std::pair<int, TH3D>> ratio_histogram_collection;
     
   }; // class QEinterferenceResponseCalculator
 
   inline double QEInterferenceResponseCalculator::GetWeight( int pdg, double Enu_GeV,
 							     double Q0_GeV, double Q3_GeV ) {
+
+    // Check if the flavour is handled, return 1.0 if not
+    std::vector<std::pair<int, TH3D>>::iterator it_hst = ratio_histogram_collection.begin();
+    for( it_hst; it_hst != ratio_histogram_collection.end(); ++it_hst ) {
+      if( (*it_hst).first == pdg ) break;
+    }
+    if( it_hst == ratio_histogram_collection.end() ) {
+      return 1.0;
+    }
+
+    int collection_index = it_hst - ratio_histogram_collection.begin();
+    TH3D ratio_histogram = ratio_histogram_collection[collection_index].second;
+    std::vector<double> Enu_bins = Enu_bin_collection[collection_index].second;
+    std::vector<double>  Q0_bins =  Q0_bin_collection[collection_index].second;
+    std::vector<double>  Q3_bins =  Q3_bin_collection[collection_index].second;
+    
     // If outside the kinematic range, return 1.0
-    if( Enu_GeV < *(Enu_bins.begin()) || Enu_GeV > *(Enu_bins.end()-1) ||
-	Q0_GeV < *(Q0_bins.begin()) || Q0_GeV > *(Q0_bins.end()-1) ||
-	Q3_GeV < *(Q3_bins.begin()) || Q3_GeV > *(Q3_bins.end()-1) ) return 1.0;
+    if( Enu_GeV < *(Enu_bins.begin()) || Enu_GeV > *(Enu_bins.end()-2) ||
+	Q0_GeV < *(Q0_bins.begin()) || Q0_GeV > *(Q0_bins.end()-2) ||
+	Q3_GeV < *(Q3_bins.begin()) || Q3_GeV > *(Q3_bins.end()-2) ) {
+      /*
+      std::cout << "Outside kinematic range! Enu = " << Enu_GeV
+		<< ", Q0 = " << Q0_GeV << ", Q3 = " << Q3_GeV << std::endl;
+      std::cout << "cf. Enu bins: " << *(Enu_bins.begin()) << " - " << *(Enu_bins.end()-2)
+		<< "\nQ0 bins: " << *(Q0_bins.begin()) << " - " << *(Q0_bins.end()-2)
+		<< "\nQ3 bins: " << *(Q3_bins.begin()) << " - " << *(Q3_bins.end()-2) << std::endl;
+      */
+      return 1.0;
+    }
 
     // Seek out the bin and return it
 
@@ -69,12 +96,9 @@ namespace nusyst {
     int bin_enu = it_enu - Enu_bins.begin();
     int bin_q0  = it_q0  -  Q0_bins.begin();
     int bin_q3  = it_q3  -  Q3_bins.begin();
-    switch(pdg) {
-    case 14:
-      return numu_ratio_histogram.GetBinContent( bin_enu, bin_q0, bin_q3 );
-    default: // RETHERE: to add
-      return 1.0;
-    } // switch pdg
+
+    return ratio_histogram.GetBinContent( bin_enu, bin_q0, bin_q3 );
+
   } // GetWeight()
 
   inline void QEInterferenceResponseCalculator::LoadInputHistograms(fhicl::ParameterSet const & ps)
@@ -87,6 +111,9 @@ namespace nusyst {
 	   ps.get<std::vector<fhicl::ParameterSet>>("inputs") ) {
       std::string flavour_name = val_config.get<std::string>("name"); // for flavours. nu(mu,e)(bar)
       std::string input_hist   = val_config.get<std::string>("input_hist"); // name of the hist in file
+      std::string input_enu_bins = val_config.get<std::string>("input_enu_bins");
+      std::string input_q0_bins = val_config.get<std::string>("input_q0_bins");
+      std::string input_q3_bins = val_config.get<std::string>("input_q3_bins");
       std::string input_file   = val_config.get<std::string>("input_file", default_input_file);
 
       if( std::find( known_flavours.begin(), known_flavours.end(), flavour_name.c_str() ) ==
@@ -105,6 +132,7 @@ namespace nusyst {
 	input_file = std::string(std::getenv("nusystematics_ROOT")) + "/data/" + input_file;
       } // absolute path not given
 
+      /*
       if( flavour_name == "numu" ){
 	numu_ratio_histogram = *(GetHistogram<TH3D>( input_file, input_hist ));
       }
@@ -126,6 +154,54 @@ namespace nusyst {
 			    hQ0_bins.GetBinWidth(hQ0_bins.GetNbinsX()) );
       Q3_bins.emplace_back( hQ3_bins.GetBinLowEdge(hQ3_bins.GetNbinsX()) + 
 			    hQ3_bins.GetBinWidth(hQ3_bins.GetNbinsX()) );
+      */
+
+      int nu_pdg = -1;
+      if( flavour_name == "numu" ) nu_pdg = 14;
+      else if( flavour_name == "numubar" ) nu_pdg = -14;
+      else if( flavour_name == "nue" ) nu_pdg = 12;
+      else if( flavour_name == "nuebar" ) nu_pdg = -12;
+
+      std::vector<double> Enu_bins, Q0_bins, Q3_bins;
+
+      TH3D ratio_histogram;
+      TH1D hEnu_bins, hQ0_bins, hQ3_bins;
+      try {
+	ratio_histogram = *(GetHistogram<TH3D>( input_file, input_hist ));
+	hEnu_bins = *(GetHistogram<TH1D>( input_file, input_enu_bins ));
+	hQ0_bins  = *(GetHistogram<TH1D>( input_file, input_q0_bins  ));
+	hQ3_bins  = *(GetHistogram<TH1D>( input_file, input_q3_bins  ));
+      }
+      catch (...) {
+	throw invalid_QEIntf_INPUTHIST() << "[ERROR]: Could not load histograms for: "
+					 << input_hist << ", " << input_enu_bins
+					 << ", " << input_q0_bins << ", " << input_q3_bins;
+      }
+
+      for( Int_t ib = 1; ib <= hEnu_bins.GetNbinsX()-1; ib++ )
+	Enu_bins.emplace_back( hEnu_bins.GetBinLowEdge(ib) );
+      for( Int_t ib = 1; ib <= hQ0_bins.GetNbinsX()-1; ib++ ) 
+	Q0_bins.emplace_back( hQ0_bins.GetBinLowEdge(ib) );
+      for( Int_t ib = 1; ib <= hQ3_bins.GetNbinsX()-1; ib++ ) 
+	Q3_bins.emplace_back( hQ3_bins.GetBinLowEdge(ib) );
+
+      // Add the high edges
+      Enu_bins.emplace_back( hEnu_bins.GetBinLowEdge(hEnu_bins.GetNbinsX()) + 
+			     hEnu_bins.GetBinWidth(hEnu_bins.GetNbinsX()) );
+      Q0_bins.emplace_back( hQ0_bins.GetBinLowEdge(hQ0_bins.GetNbinsX()) + 
+			    hQ0_bins.GetBinWidth(hQ0_bins.GetNbinsX()) );
+      Q3_bins.emplace_back( hQ3_bins.GetBinLowEdge(hQ3_bins.GetNbinsX()) + 
+			    hQ3_bins.GetBinWidth(hQ3_bins.GetNbinsX()) );
+
+      // Add these to the collection
+      Enu_bin_collection.emplace_back(std::pair<int,
+				      std::vector<double>>( nu_pdg, Enu_bins ));
+      Q0_bin_collection.emplace_back(std::pair<int,
+				     std::vector<double>>( nu_pdg, Q0_bins ));
+      Q3_bin_collection.emplace_back(std::pair<int,
+				     std::vector<double>>( nu_pdg, Q3_bins ));
+      ratio_histogram_collection.emplace_back(std::pair<int, 
+					      TH3D>( nu_pdg, ratio_histogram ));
 
     } // for each flavour in inputs
   } // LoadInputHistograms

@@ -12,7 +12,17 @@
       inputs: [
           {
 	    name: "numu"
-	    input_hist: "hEnuQ0Q3_numu"
+	    input_hist: "numu_weights"
+	    input_enu_bins: "numu_enu_bins"
+	    input_q0_bins: "numu_q0_bins"
+	    input_q3_bins: "numu_q3_bins"
+	  },
+	  {
+	    name: "nue"
+	    input_hist: "nue_weights"
+	    input_enu_bins: "nue_enu_bins"
+	    input_q0_bins: "nue_q0_bins"
+	    input_q3_bins: "nue_q3_bins"
 	  }
       ]
 }   
