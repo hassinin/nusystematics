@@ -11,8 +11,11 @@ namespace nusyst {
 /// Lightweight helper that evaluates a single 2‑D weight histogram.
 class ValenciaMECq0q3ResponseCalc {
 public:
+
+
+
   /// Constructor takes ownership of the histogram (cloned internally).
-  ValenciaMECq0q3ResponseCalc(TH2D* h, double w_min = 0.0, double w_max = 5.0);
+  ValenciaMECq0q3ResponseCalc(TH2D* h, double w_min = 0.0, double w_max = 5.0,bool mapIsQ3xQ0 = false);
 
   /// Central weight with **bilinear interpolation** inside the map.
   double GetCentralWeight(double q0, double q3) const;
@@ -22,13 +25,15 @@ public:
 
 private:
   std::unique_ptr<TH2D> fHist;   ///< owned, thread‑safe clone of the histogram
-  double fWmin, fWmax;           ///< clamp limits
+  double fWmin, fWmax;      ///< clamp limits
+  bool   fMapIsQ3xQ0{false};           ///< true if map is in (q3, q0) coordinates
 };
 
 // ---------------------------------------------------------------------------
 inline ValenciaMECq0q3ResponseCalc::ValenciaMECq0q3ResponseCalc(TH2D* h,
                                                          double wmin,
-                                                         double wmax)
+                                                         double wmax,
+                                                         bool mapIsQ3xQ0)
   : fHist(h ? static_cast<TH2D*>(h->Clone()) : nullptr),
     fWmin(wmin), fWmax(wmax)
 {
@@ -55,7 +60,7 @@ inline double ValenciaMECq0q3ResponseCalc::GetCentralWeight(double q0, double q3
 
   // If kinematics fall outside trained / provided map domain, return neutral weight
   if (q3 < xMin || q3 > xMax || q0 < yMin || q0 > yMax) {
-    return 0.0; // do not extrapolate beyond Valencia map coverage
+    return 1.0; // do not extrapolate beyond Valencia map coverage
   }
 
   const double w = fHist->Interpolate(q3, q0); // bilinear inside domain
