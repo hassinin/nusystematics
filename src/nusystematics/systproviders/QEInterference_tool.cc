@@ -92,8 +92,9 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
   // Anything but QE is not handled and should be default
   // Use GetDefaultEventResponse() to return an auto-1.-filled vector
 
-  if (!ev.Summary()->ProcInfo().IsQuasiElastic() ||
-      !ev.Summary()->ProcInfo().IsWeakCC()) {
+  if ( !ev.Summary()->ProcInfo().IsQuasiElastic() ||
+       (!ev.Summary()->ProcInfo().IsWeakCC() &&
+	!ev.Summary()->ProcInfo().IsWeakNC()) ) {
     return this->GetDefaultEventResponse();
   }
 
@@ -110,6 +111,7 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
   TLorentzVector p4_nu  = *( neutrino->GetP4() );
   double Enu = p4_nu.E();
   int    pdg = neutrino->Pdg();
+  int current = static_cast<int>( ev.Summary()->ProcInfo().IsWeakNC() ); // 0 if CC, 1 if NC
   
   TLorentzVector p4_lep = *( FSLep->GetP4() );
   
@@ -125,7 +127,8 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
 
   resp.push_back( {hdr.systParamId, {}} );
   for (double var : hdr.paramVariations) {
-    double this_reweight = (1-var) + var * QEIntfResponseCalculator->GetWeight( pdg, Enu, Q0, Q3 );
+    double this_reweight = (1-var) + var * QEIntfResponseCalculator->GetWeight( pdg, current,
+										Enu, Q0, Q3 );
     resp.back().responses.push_back( this_reweight );
   }
 
