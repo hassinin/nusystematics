@@ -32,11 +32,25 @@
 	    input_q3_bins: "numu_nc_q3_bins"
 	  },
 	  {
+	    name: "numubar_nc"
+	    input_hist: "numubar_nc_weights"
+	    input_enu_bins: "numubar_nc_enu_bins"
+	    input_q0_bins: "numubar_nc_q0_bins"
+	    input_q3_bins: "numubar_nc_q3_bins"
+	  },
+	  {
 	    name: "nue_nc"
 	    input_hist: "nue_nc_weights"
 	    input_enu_bins: "nue_nc_enu_bins"
 	    input_q0_bins: "nue_nc_q0_bins"
 	    input_q3_bins: "nue_nc_q3_bins"
+	  },
+	  {
+	    name: "nuebar_nc"
+	    input_hist: "nuebar_nc_weights"
+	    input_enu_bins: "nuebar_nc_enu_bins"
+	    input_q0_bins: "nuebar_nc_q0_bins"
+	    input_q3_bins: "nuebar_nc_q3_bins"
 	  }
       ]
 }   

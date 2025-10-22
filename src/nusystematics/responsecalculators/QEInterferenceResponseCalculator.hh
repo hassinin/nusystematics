@@ -76,13 +76,6 @@ namespace nusyst {
     if( Enu_GeV < *(Enu_bins.begin()) || Enu_GeV > *(Enu_bins.end()-2) ||
 	Q0_GeV < *(Q0_bins.begin()) || Q0_GeV > *(Q0_bins.end()-2) ||
 	Q3_GeV < *(Q3_bins.begin()) || Q3_GeV > *(Q3_bins.end()-2) ) {
-      /*
-      std::cout << "Outside kinematic range! Enu = " << Enu_GeV
-		<< ", Q0 = " << Q0_GeV << ", Q3 = " << Q3_GeV << std::endl;
-      std::cout << "cf. Enu bins: " << *(Enu_bins.begin()) << " - " << *(Enu_bins.end()-2)
-		<< "\nQ0 bins: " << *(Q0_bins.begin()) << " - " << *(Q0_bins.end()-2)
-		<< "\nQ3 bins: " << *(Q3_bins.begin()) << " - " << *(Q3_bins.end()-2) << std::endl;
-      */
       return 1.0;
     }
 
