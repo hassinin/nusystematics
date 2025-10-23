@@ -45,15 +45,15 @@ MECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
   SystMetaData smd;
   SystParamHeader phdr;
   if (ParseFhiclToolConfigurationParameter(ps,
-                                           "ValenciaMECResponse",
+                                           "MECResponse",
                                            phdr, firstId)) {
     phdr.systParamId = firstId++;
     smd.push_back(phdr);
   }
 
   // stash manifest for SetupResponseCalculator
-  auto man = ps.get<fhicl::ParameterSet>("ValenciaMECResponse_input_manifest");
-  tool_options.put("ValenciaMECResponse_input_manifest", man);
+  auto man = ps.get<fhicl::ParameterSet>("MECResponse_input_manifest");
+  tool_options.put("MECResponse_input_manifest", man);
 
   return smd;
 }
@@ -66,7 +66,7 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
   std::cout << "[MECq0q3InterpWeighting] SetupResponseCalculator begin\n";
 
   const auto manifest =
-      tool_opts.get<fhicl::ParameterSet>("ValenciaMECResponse_input_manifest");
+      tool_opts.get<fhicl::ParameterSet>("MECResponse_input_manifest");
 
   // Energy grid (required)
   if (!manifest.has_key("EnergyGrid"))

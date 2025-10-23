@@ -1,14 +1,14 @@
-ValenciaInterp: {
+MECInterp: {
 
   tool_type: "MECq0q3InterpWeighting"
   instance_name: "SBNNuSyst"
 
   # Define the systematic parameter (dial) for interpolation weighting
   # central value 0, evaluate at -1, 0, +1 (can expand later)
-  ValenciaMECResponse_central_value: 0
-  ValenciaMECResponse_variation_descriptor: "[-1,0,1]"
+  MECResponse_central_value: 0
+  MECResponse_variation_descriptor: "[-1,0,1]"
 
-  ValenciaMECResponse_input_manifest: {
+  MECResponse_input_manifest: {
 
     # ============================================================
     # MODEL SELECTION: Choose "valencia" or "martini"
@@ -48,4 +48,4 @@ ValenciaInterp: {
 
 }
 
-syst_providers : [ValenciaInterp]
+syst_providers : [MECInterp]
