@@ -1,6 +1,6 @@
 ValenciaInterp: {
 
-  tool_type: "ValenciaMECq0q3InterpWeighting"
+  tool_type: "MECq0q3InterpWeighting"
   instance_name: "SBNNuSyst"
 
   # Define the systematic parameter (dial) for interpolation weighting

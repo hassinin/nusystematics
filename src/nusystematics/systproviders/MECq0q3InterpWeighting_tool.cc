@@ -1,7 +1,7 @@
 /*******************************************************************************
- * ValenciaMECq0q3InterpWeighting_tool.cc
+ * MECq0q3InterpWeighting_tool.cc
  ******************************************************************************/
-#include "ValenciaMECq0q3InterpWeighting_tool.hh"
+#include "MECq0q3InterpWeighting_tool.hh"
 
 #include <fhiclcpp/ParameterSet.h>
 #include <TFile.h>
@@ -30,17 +30,17 @@
 using namespace nusyst;
 using namespace systtools;
 
-ValenciaMECq0q3InterpWeighting::ValenciaMECq0q3InterpWeighting(
+MECq0q3InterpWeighting::MECq0q3InterpWeighting(
     const fhicl::ParameterSet& p)
   : IGENIESystProvider_tool(p) {}
 
 // ---------------------------------------------------------------------------
 // Build metadata (standard NuSyst header parsing)
 SystMetaData
-ValenciaMECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
+MECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
                                                   systtools::paramId_t firstId) {
 
-  std::cout << "[ValenciaMECq0q3InterpWeighting::BuildSystMetaData] Called\n";
+  std::cout << "[MECq0q3InterpWeighting::BuildSystMetaData] Called\n";
 
   SystMetaData smd;
   SystParamHeader phdr;
@@ -61,9 +61,9 @@ ValenciaMECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
 // ---------------------------------------------------------------------------
 // Read manifest and build calculators
 bool
-ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_opts)
+MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_opts)
 {
-  std::cout << "[ValenciaMECq0q3InterpWeighting] SetupResponseCalculator begin\n";
+  std::cout << "[MECq0q3InterpWeighting] SetupResponseCalculator begin\n";
 
   const auto manifest =
       tool_opts.get<fhicl::ParameterSet>("ValenciaMECResponse_input_manifest");
@@ -165,7 +165,7 @@ ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet cons
       throw std::runtime_error("Unknown Model: '" + model + "'. Expected 'valencia' or 'martini'");
     }
     
-    std::cout << "[ValenciaMECq0q3InterpWeighting] Auto-selecting model: " << model << "\n";
+    std::cout << "[MECq0q3InterpWeighting] Auto-selecting model: " << model << "\n";
     std::cout << "  Model directory: " << modelDir << "\n";
     
     // Generate file paths for each energy point
@@ -215,7 +215,7 @@ ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet cons
                   << "  X:[" << h->GetXaxis()->GetXmin() << "," << h->GetXaxis()->GetXmax() << "]"
                   << "  Y:[" << h->GetYaxis()->GetXmin() << "," << h->GetYaxis()->GetXmax() << "]\n";
 
-        vec.emplace_back(std::make_unique<ValenciaMECq0q3ResponseCalc>(h, fWmin, fWmax, mapIsQ3xQ0));
+        vec.emplace_back(std::make_unique<MECq0q3ResponseCalc>(h, fWmin, fWmax, mapIsQ3xQ0));
       }
     }
     fin.Close();
@@ -244,7 +244,7 @@ ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet cons
                   << "  X:[" << h->GetXaxis()->GetXmin() << "," << h->GetXaxis()->GetXmax() << "]"
                   << "  Y:[" << h->GetYaxis()->GetXmin() << "," << h->GetYaxis()->GetXmax() << "]\n";
 
-        vec.emplace_back(std::make_unique<ValenciaMECq0q3ResponseCalc>(h, fWmin, fWmax, mapIsQ3xQ0));
+        vec.emplace_back(std::make_unique<MECq0q3ResponseCalc>(h, fWmin, fWmax, mapIsQ3xQ0));
         fin.Close();
       }
     };
@@ -253,14 +253,14 @@ ValenciaMECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet cons
     load_list(nn_files, Topo::nn, hname_nn);
   }
 
-  std::cout << "[ValenciaMECq0q3InterpWeighting] SetupResponseCalculator done\n";
+  std::cout << "[MECq0q3InterpWeighting] SetupResponseCalculator done\n";
   return true;
 }
 
 // ---------------------------------------------------------------------------
 // Event response
 systtools::event_unit_response_t
-ValenciaMECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
+MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
 {
   // classify topology
   const Topo topo = ClassifyEvent(ev);
@@ -349,7 +349,7 @@ ValenciaMECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
 
 // q0, q3, Enu from (probe – final-state lepton)
 void
-ValenciaMECq0q3InterpWeighting::ComputeQ0Q3(genie::EventRecord const& ev,
+MECq0q3InterpWeighting::ComputeQ0Q3(genie::EventRecord const& ev,
                                             double& q0, double& q3, double& Enu)
 {
   const TLorentzVector p4nu  = *ev.Probe()->P4();
@@ -364,8 +364,8 @@ ValenciaMECq0q3InterpWeighting::ComputeQ0Q3(genie::EventRecord const& ev,
 }
 
 // classify 2N initial cluster
-ValenciaMECq0q3InterpWeighting::Topo
-ValenciaMECq0q3InterpWeighting::ClassifyEvent(genie::EventRecord const& ev)
+MECq0q3InterpWeighting::Topo
+MECq0q3InterpWeighting::ClassifyEvent(genie::EventRecord const& ev)
 {
   for (int i = 0; i < ev.GetEntries(); ++i) {
     const auto* p = ev.Particle(i);
