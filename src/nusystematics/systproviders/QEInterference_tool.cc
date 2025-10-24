@@ -9,8 +9,14 @@ using namespace fhicl;
 
 QEInterference::QEInterference(ParameterSet const & ps) :
   IGENIESystProvider_tool(ps),
-  QEIntfResponseCalculator(nullptr),
-  ResponseParameterIdx(kParamUnhandled<size_t>) {}
+  QEIntfResponseCalculator(nullptr)/*,
+				     ResponseParameterIdx(kParamUnhandled<size_t>) {}*/
+{
+  for( std::vector<std::string>::iterator it_desc = descriptors.begin();
+       it_desc != descriptors.end(); ++it_desc ) {
+    ResponseParameterIndices.emplace_back( kParamUnhandled<size_t> );
+  }
+}
 
 QEInterference::~QEInterference() {}
 
@@ -18,15 +24,39 @@ bool QEInterference::SetupResponseCalculator(ParameterSet const & tool_options)
 {
   // Silence GENIE
   genie::Messenger::Instance()->SetPrioritiesFromXmlFile("Messenger_whisper.xml");
-  //genie::Messenger::Instance()->SetPriorityLevel("GHepUtils",
-  //                                               log4cpp::Priority::FATAL);
+
+  verbosity_level = tool_options.get<int>("verbosity_level", 0);
 
   // Check the metadata makes sense
+  SystMetaData const & md = GetSystMetaData();
+  /*
   if (!HasParam(GetSystMetaData(), "QEInterference")) {
     throw incorrectly_configured()
         << "[ERROR]: Expected to find parameter named "
         << std::quoted("QEInterference");
   }
+  */
+
+  for( std::vector<std::string>::iterator it_desc = descriptors.begin();
+       it_desc != descriptors.end(); ++it_desc ) {
+    if( !HasParam( md, *it_desc ) ) {
+      throw incorrectly_configured()
+	<< "[ERROR]: Expected to find parameter named "
+	<< std::quoted(*it_desc);
+    } // Problem: Parameter not found.
+    
+    // Get the parameter index
+    ResponseParameterIndices[it_desc - descriptors.begin()] = GetParamIndex(md, *it_desc);
+    if( verbosity_level > 1 ) {
+      std::ostringstream asts;
+      std::vector<double> param_variations = md[GetParamIndex(md, *it_desc)].paramVariations;
+      asts << "[INFO]: Configured parameter " << *it_desc << " with variations:\n\t[";
+      for( double & var: param_variations ) asts << " " << var << ",";
+      asts << " ]";
+      std::cout << asts.str() << std::endl;
+    } // verbose output about configuration
+    
+  } // loop over descriptors
 
   // Get manifests for options
   if (!tool_options.has_key("QEInterference_input_manifest")) {
@@ -45,8 +75,10 @@ bool QEInterference::SetupResponseCalculator(ParameterSet const & tool_options)
       tool_options.get<fhicl::ParameterSet>(
           "QEInterference_input_manifest");
 
+  /*
   ResponseParameterIdx =
       GetParamIndex(GetSystMetaData(), "QEInterference");
+  */
 
   // Initialise the calculator
   QEIntfResponseCalculator = std::make_unique<QEInterferenceResponseCalculator>(templateManifest);
@@ -59,12 +91,28 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
 {
   SystMetaData smd;
 
+  /*
   SystParamHeader phdr;
   if (ParseFhiclToolConfigurationParameter(cfg, "QEInterference",
                                                  phdr, id)) {
     phdr.systParamId = id++;
     smd.push_back(phdr);
   }
+  */
+
+  // Obtain each named parameter from the descriptors in the fcl
+  for( std::vector<std::string>::iterator it_desc = descriptors.begin();
+       it_desc != descriptors.end(); ++it_desc ) {
+    SystParamHeader phdr;
+    std::string pname = *it_desc;
+    if( ParseFhiclToolConfigurationParameter(cfg, pname, phdr, id) ) {
+      if( verbosity_level > 4 ) {
+	std::cout << "[DEBUG]: Found parameter " << pname << " with id = " << id << std::endl;
+      } // verbose output
+      phdr.systParamId = id++; // increment id here
+      smd.push_back(phdr);
+    }
+  } // loop over named parameters
 
   ParameterSet templateManifest =
       cfg.get<ParameterSet>("QEInterference_input_manifest");
@@ -123,6 +171,7 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
 
   // Make the output
   event_unit_response_t resp;
+  /*
   SystParamHeader const & hdr = GetSystMetaData()[ResponseParameterIdx];
 
   resp.push_back( {hdr.systParamId, {}} );
@@ -130,6 +179,56 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
     double this_reweight = (1-var) + var * QEIntfResponseCalculator->GetWeight( pdg, current,
 										Enu, Q0, Q3 );
     resp.back().responses.push_back( this_reweight );
+  }
+  */
+
+  SystMetaData const & md = GetSystMetaData();
+
+  // Obtain the descriptors we want
+  std::vector<std::string>::iterator it_cfg = std::find(descriptors.begin(), 
+							descriptors.end(), "QEIntf_dial");
+  if( it_cfg == descriptors.end() ) {
+    throw incorrectly_configured()
+      << "[ERROR]: Expected to find parameter named "
+      << std::quoted("QEIntf_dial");
+  } // Problem. Could not find "QEIntf_dial"
+  size_t twk_dial_pos = it_cfg  - descriptors.begin();
+  SystParamHeader const & twk_dial = md[ResponseParameterIndices[twk_dial_pos]];
+
+  it_cfg = std::find(descriptors.begin(), descriptors.end(), "ACHILLES_strength");
+  if( it_cfg == descriptors.end() ) {
+    throw incorrectly_configured()
+      << "[ERROR]: Expected to find parameter named "
+      << std::quoted("ACHILLES_strength");
+  } // Problem. Could not find "ACHILLES_strength"
+  size_t strength_pos = it_cfg  - descriptors.begin();
+  SystParamHeader const & strength = md[ResponseParameterIndices[strength_pos]];
+
+  // From the tweak dial and the strength, construct the weight.
+  // First, get the raw response from the histogram
+  double raw_response = QEIntfResponseCalculator->GetWeight( pdg, current, Enu, Q0, Q3 );
+  if( std::isnan(raw_response) || raw_response == 0.0 ) raw_response = 1.0;
+
+  // Initialise response arrays
+  // We'll be careful here. Use resize to construct the vectors
+  resp.push_back({twk_dial.systParamId, {}});
+  resp.back().responses.resize( twk_dial.paramVariations.size() );
+  resp.push_back({strength.systParamId, {}});
+  resp.back().responses.resize( strength.paramVariations.size() );
+
+  // Then, apply a linear scaling on the weight, via strength.
+  // A strength of 0 maps to weight = 1 (no change from CV), a strength of 1 maps to raw_response
+  // We'll save two weights. The tweak dial holds the linear weight (assuming strength = 1)
+  // The strength == modified ACHILLES weight / baseline ACHILLES weight
+
+  size_t is = 0; size_t it = 0;
+  for( const double & twk : twk_dial.paramVariations ) {
+    double this_reweight = std::max( 0.0, (1.0 - twk) + twk * raw_response );
+    (*std::prev(resp.end(), 2)).responses[it++] = this_reweight;
+  }
+  for( const double & strength_val : strength.paramVariations ) {
+    double modified_response = std::max( 0.0, (1.0 - strength_val) + strength_val * raw_response );
+    (*std::prev(resp.end(), 1)).responses[is++] = modified_response / raw_response;
   }
 
   return resp;

@@ -1,14 +1,21 @@
- QEInterference_toolconfig: {
+QEInterference_toolconfig: {
     tool_type: "QEInterference"
     instance_name: "QEInterference"
 
+    # Old style variation descriptor: global
     #QEInterference_variation_descriptor: "(0,1,0.5)"
-    QEInterference_variation_descriptor: "[0, 1]"
+    #QEInterference_variation_descriptor: "[0, 1]"
+
+    QEIntf_dial_variation_descriptor: "[0, 1]"
+    
+    # New descriptor, controlling strength of effect
+    # Start off as a global tweak
+    ACHILLES_strength_variation_descriptor: "(0,2,0.5)"
 
     verbosity_level: 5
 
     QEInterference_input_manifest: {
-      input_file: "ACHILLES_weights.root"
+      input_file: "/exp/sbnd/app/users/kplows/for_gray/ACHILLES/ACHILLES_weights.root"
       inputs: [
           {
 	    name: "numu_cc"
@@ -53,7 +60,7 @@
 	    input_q3_bins: "nuebar_nc_q3_bins"
 	  }
       ]
-}   
-  }
+   }   
+}
 
 syst_providers: [QEInterference_toolconfig]
