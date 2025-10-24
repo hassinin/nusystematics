@@ -57,14 +57,11 @@ private:
   // Will be loaded into the appropriate members in BuildSystMetaData()
   std::vector<std::string> descriptors = {
     "QEIntf_dial", ///< Tweak dial t controlling linear response: f(t; W) = 1-t + t*W
-    "ACHILLES_strength" ///< Linear scaling to weight. g(a; W) = a*W
+    "ACHILLES_strength" ///< Linear scaling to weight. g(a; W) = W(a)/W(1), W(a) = 1-a + a*W
   };
 
   //size_t ResponseParameterIdx;
   std::vector<size_t> ResponseParameterIndices;
-
-  // Members containing the tweak dials, and tweak strength
-  //std::vector<std::vector<double>> variations;
 
   int nu_pdg;
   double Enu, Q0, Q3;
