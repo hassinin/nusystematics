@@ -95,7 +95,7 @@ namespace nusyst {
 
     double weight = ratio_histogram.GetBinContent( bin_enu, bin_q0, bin_q3 );
     weight = std::isnan(weight) ? 1.0 : weight; // Guards against NaNs in histogram if outside ACHILLES coverage
-    return weight;
+    return (weight != 0.0) ? weight : 1.0; // default response if zero
 
   } // GetWeight()
 
