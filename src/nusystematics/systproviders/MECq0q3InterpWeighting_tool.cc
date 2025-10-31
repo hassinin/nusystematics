@@ -157,10 +157,10 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
     
     if (model == "valencia") {
       modelDir = "ValenciaMECq0q3";
-      filePrefix = "reweight_combined";
+      filePrefix = "reweight_data_SuSAv2_to_valencia";
     } else if (model == "martini") {
       modelDir = "martini_2p2h_weights";
-      filePrefix = "reweight__SuSAv2_to_martini";
+      filePrefix = "reweight_data_SuSAv2_to_martini";
     } else {
       throw std::runtime_error("Unknown Model: '" + model + "'. Expected 'valencia' or 'martini'");
     }
@@ -170,10 +170,10 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
     
     // Generate file paths for each energy point
     for (double E : fEgrid) {
-      std::string np_file = dataBaseDir + "/" + modelDir + "/" + 
-                           filePrefix + "_np_" + Form("%0.1f", E) + "GeV.root";
-      std::string nn_file = dataBaseDir + "/" + modelDir + "/" + 
-                           filePrefix + "_nn_" + Form("%0.1f", E) + "GeV.root";
+  std::string np_file = dataBaseDir + "/" + modelDir + "/" + 
+           filePrefix + "_np_" + Form("%0.2f", E) + "GeV.root";
+  std::string nn_file = dataBaseDir + "/" + modelDir + "/" + 
+           filePrefix + "_nn_" + Form("%0.2f", E) + "GeV.root";
       np_files.push_back(np_file);
       nn_files.push_back(nn_file);
       std::cout << "  Generated np file: " << np_file << "\n";
@@ -206,7 +206,7 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
       vec.reserve(fEgrid.size());
 
       for (double E : fEgrid) {
-        const std::string hname = Form("h_weights_map_%s_%0.1fGeV", tag, E);
+  const std::string hname = Form("h_weights_map_%s_%0.2fGeV", tag, E);
         TH2D* h = dynamic_cast<TH2D*>(fin.Get(hname.c_str()));
         if (!h) throw std::runtime_error("Missing histogram '" + hname +
                                          "' in file " + fname);
