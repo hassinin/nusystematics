@@ -27,6 +27,26 @@ bool QEInterference::SetupResponseCalculator(ParameterSet const & tool_options)
 
   verbosity_level = tool_options.get<int>("verbosity_level", 0);
 
+  std::string bedges = tool_options.get<std::string>("q0_bin_edges");
+  if( verbosity_level > 3 ) {
+    std::cout << "[INFO]: Using bin edges " << bedges.c_str() << std::endl;
+  }
+
+  bedges.erase(std::remove_if(bedges.begin(), bedges.end(), 
+			      [](char c){ return (static_cast<int>(c) == static_cast<int>('[') || 
+						  static_cast<int>(c) == static_cast<int>(']')); }),
+	       bedges.end());
+  std::stringstream ists(bedges);
+  std::string token;
+
+  while (std::getline(ists, token, ',')) {
+    try {
+      q0BinEdges.emplace_back(std::stod(token));
+    } catch (...) {
+      continue;
+    }
+  }
+
   // Check the metadata makes sense
   SystMetaData const & md = GetSystMetaData();
 
@@ -93,6 +113,13 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
     }
   } // loop over named parameters
 
+  std::string q0Bins = 
+    cfg.get<std::string>("q0_bin_edges");
+  if( !cfg.has_key("QEInterference_input_manifest") ) {
+    throw invalid_ToolConfigurationFHiCL() << "No q0 bin edges!!!";
+  }
+  tool_options.put("q0_bin_edges", q0Bins);
+
   ParameterSet templateManifest =
       cfg.get<ParameterSet>("QEInterference_input_manifest");
 
@@ -153,51 +180,40 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
 
   SystMetaData const & md = GetSystMetaData();
 
-  // Obtain the descriptors we want
-  std::vector<std::string>::iterator it_cfg = std::find(descriptors.begin(), 
-							descriptors.end(), "QEIntf_dial");
-  if( it_cfg == descriptors.end() ) {
-    throw incorrectly_configured()
-      << "[ERROR]: Expected to find parameter named "
-      << std::quoted("QEIntf_dial");
-  } // Problem. Could not find "QEIntf_dial"
-  size_t twk_dial_pos = it_cfg  - descriptors.begin();
-  SystParamHeader const & twk_dial = md[ResponseParameterIndices[twk_dial_pos]];
-
-  it_cfg = std::find(descriptors.begin(), descriptors.end(), "ACHILLES_strength");
-  if( it_cfg == descriptors.end() ) {
-    throw incorrectly_configured()
-      << "[ERROR]: Expected to find parameter named "
-      << std::quoted("ACHILLES_strength");
-  } // Problem. Could not find "ACHILLES_strength"
-  size_t strength_pos = it_cfg  - descriptors.begin();
-  SystParamHeader const & strength = md[ResponseParameterIndices[strength_pos]];
-
   // From the tweak dial and the strength, construct the weight.
   // First, get the raw response from the histogram
   double raw_response = QEIntfResponseCalculator->GetWeight( pdg, current, Enu, Q0, Q3 );
 
   // Initialise response arrays
   // We'll be careful here. Use resize to construct the vectors
-  resp.push_back({twk_dial.systParamId, {}});
-  resp.back().responses.resize( twk_dial.paramVariations.size() );
-  resp.push_back({strength.systParamId, {}});
-  resp.back().responses.resize( strength.paramVariations.size() );
+  
+  SystParamHeader const & td0 = md[ResponseParameterIndices[0]];
+  SystParamHeader const & td1 = md[ResponseParameterIndices[1]];
+  SystParamHeader const & td2 = md[ResponseParameterIndices[2]];
+  SystParamHeader const & td3 = md[ResponseParameterIndices[3]];
+  SystParamHeader const & td4 = md[ResponseParameterIndices[4]];
+  SystParamHeader const & td5 = md[ResponseParameterIndices[5]];
 
-  // Then, apply a linear scaling on the weight, via strength.
-  // A strength of 0 maps to weight = 1 (no change from CV), a strength of 1 maps to raw_response
-  // We'll save two weights. The tweak dial holds the linear weight (assuming strength = 1)
-  // The strength == modified ACHILLES weight / baseline ACHILLES weight
-
-  size_t is = 0; size_t it = 0;
-  for( const double & twk : twk_dial.paramVariations ) {
-    double this_reweight = std::max( 0.0, (1.0 - twk) + twk * raw_response );
-    (*std::prev(resp.end(), 2)).responses[it++] = this_reweight;
-  }
-  for( const double & strength_val : strength.paramVariations ) {
-    double modified_response = std::max( 0.0, (1.0 - strength_val) + strength_val * raw_response );
-    (*std::prev(resp.end(), 1)).responses[is++] = modified_response / raw_response;
-  }
+  std::vector<SystParamHeader> systs = { td0, td1, td2, td3, td4, td5 };
+  int iSyst = 0;
+  for( auto param : systs ) {
+    resp.push_back({param.systParamId, {}});
+    // Figure out if this is the correct q0 bin to use
+    std::cout << Q0 << std::endl;
+    if(q0BinEdges[iSyst+1] < Q0 || q0BinEdges[iSyst] >= Q0) { // Default response
+      std::vector<double> vec(param.paramVariations.size(), 1.0);
+      resp.back().responses = vec; 
+    } else {
+      std::vector<double> vec;
+      std::cout << "Picking iSyst = " << iSyst << std::endl;
+      for( const double & twk : param.paramVariations ) {
+	double this_reweight = std::max( 0.0, (1.0 - twk) + twk * raw_response );
+	vec.push_back(this_reweight);
+      }
+      resp.back().responses = vec; 
+    }
+    iSyst++;
+  }  // loop over all systs 
 
   return resp;
 }
