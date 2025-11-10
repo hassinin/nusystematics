@@ -611,7 +611,7 @@ int main(int argc, char const *argv[]) {
     //    W^2 = M_N^2 + 2 M_N q0 - Q^2  (q0 = energy transfer)
     {
       // Force single-nucleon mass for consistent comparison (no cluster mass)
-      const double MN = 0.939; // GeV
+      const double MN = 0.93827203; // GeV
       const double W2 = MN * MN + 2.0 * MN * tst.q0 - tst.Q2;
       tst.w = (W2 > 0.0) ? std::sqrt(W2) : -1.0;
     }
