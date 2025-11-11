@@ -34,18 +34,29 @@ MECInterp: {
     Q0ApplyMax: 3.0     # GeV
 
     Q0GuardMin: 0.0            
-    Q0GuardMax: 0.0 
 
-    EnuMin:       0.4
-    EnuMax:       2.5
-    EnuSnapTol:   0.005
-    
-    HistNameNP: "h_weights_map;1"
-    HistNameNN: "h_weights_map;1"
-    MapIsQ3xQ0: true
+  # Small guard window to avoid strong extrapolation at the Q0 lower edge.
+  # This clamps/guards low-q0 lookups to a small positive q0 to reduce
+  # artificial spikes coming from empty/near-zero bins in the source maps.
+  Q0GuardMin: 0.02   # GeV (20 MeV)
+  Q0GuardMax: 0.03   # GeV
 
-    UseNearestBin: true
-    EdgeClamp: false
+  EnuMin:       0.4
+  EnuMax:       2.5
+  EnuSnapTol:   0.005
+
+  HistNameNP: "h_weights_map;1"
+  HistNameNN: "h_weights_map;1"
+  MapIsQ3xQ0: true
+
+  # UseNearestBin: when true, picks the nearest histogram bin (causes
+  # step/discontinuous jumps). Prefer interpolation when possible.
+  UseNearestBin: false
+
+  # EdgeClamp: when true, clamps q0/q3 lookups to the histogram edges
+  # instead of extrapolating or using empty bins. Enabling this reduces
+  # large discontinuities and suppresses artificial peaks at the edges.
+  EdgeClamp: true
 
   }
 
