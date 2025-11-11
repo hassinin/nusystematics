@@ -2,6 +2,3 @@
 file(GLOB DATAFILES ${CMAKE_SOURCE_DIR}/data/*)
 install(FILES ${DATAFILES} DESTINATION ${CMAKE_INSTALL_PREFIX}/data)
 
-# install(DIRECTORY ${CMAKE_SOURCE_DIR}/data/ValenciaMECq0q3 
-#         ${CMAKE_SOURCE_DIR}/data/martini_2p2h_weights
-#         DESTINATION ${CMAKE_INSTALL_PREFIX}/data)
