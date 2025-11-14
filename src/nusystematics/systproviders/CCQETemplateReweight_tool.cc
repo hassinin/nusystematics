@@ -159,7 +159,7 @@ CCQETemplateReweight::GetEventResponse(genie::EventRecord const &ev) {
     //bin_kin = {emTransfer.Vect().Mag(), emTransfer.E()};
     // TEST; cutoff for non-physical reweights
     double this_q3 = emTransfer.Vect().Mag();
-    double this_q0 = emTransfer.E()>q0_bin_boundaries[kNumQ0Bins+1] ? q0_bin_boundaries[kNumQ0Bins+1] : emTransfer.E();
+    double this_q0 = emTransfer.E()>q0_bin_boundaries[kNumQ0Bins] ? q0_bin_boundaries[kNumQ0Bins] : emTransfer.E();
     bin_kin = {this_q3, this_q0};
   }
   else if(rwMode==PCTheta){
@@ -234,7 +234,7 @@ std::string CCQETemplateReweight::AsString() { return ""; }
 
 int CCQETemplateReweight::GetQ0BinIndex(double q0_value) const {
 
-  double q0_cutoff = (q0_value > q0_bin_boundaries[kNumQ0Bins+1]) ? q0_bin_boundaries[kNumQ0Bins+1] : q0_value;
+  double q0_cutoff = (q0_value > q0_bin_boundaries[kNumQ0Bins]) ? q0_bin_boundaries[kNumQ0Bins] : q0_value;
   
   for (size_t i = 0; i < kNumQ0Bins; ++i) {
     if (q0_cutoff >= q0_bin_boundaries[i] && q0_cutoff < q0_bin_boundaries[i + 1]) {
@@ -242,7 +242,7 @@ int CCQETemplateReweight::GetQ0BinIndex(double q0_value) const {
     }
   }
   
-  if (q0_cutoff >= q0_bin_boundaries[kNumQ0Bins+1]) {
+  if (q0_cutoff >= q0_bin_boundaries[kNumQ0Bins]) {
     return kNumQ0Bins;
   }
   
