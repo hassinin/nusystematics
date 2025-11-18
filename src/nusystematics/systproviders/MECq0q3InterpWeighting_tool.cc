@@ -320,22 +320,20 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
     return this->GetDefaultEventResponse();
 
   // Helper lambda to create zero-weight response (suppress events)
+
   auto GetZeroWeightResponse = [this]() {
-    systtools::event_unit_response_t response;
-    if (!this->GetSystMetaData().empty()) {
-      const auto &hdr = this->GetSystMetaData()[0];
-      systtools::ParamResponses pr;
-      pr.pid = hdr.systParamId;
-      pr.responses.assign(hdr.paramVariations.size(), 0.0);
-      if (pr.responses.empty()) pr.responses.push_back(0.0);
-      response.push_back(std::move(pr));
-    } else {
-      systtools::ParamResponses pr;
-      pr.pid = 0;
-      pr.responses = { 0.0 };
-      response.push_back(std::move(pr));
+    auto const& smd = this->GetSystMetaData();
+    systtools::event_unit_response_t resp;
+    resp.reserve(smd.size());
+    for(auto const& sph : smd) {
+      // Create zero-weight response for this parameter
+      if (sph.isCorrection) {
+        resp.push_back({sph.systParamId, std::vector<double>{0.0}});
+      } else {
+        resp.push_back({sph.systParamId, std::vector<double>(sph.paramVariations.size(), 0.0)});
+      }
     }
-    return response;
+    return resp;
   };
 
   // NEW: q0 apply window gate: ZERO weight if outside (q0min, q0max)
