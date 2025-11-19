@@ -12,6 +12,7 @@ SET(SYSTP_IMPLFILES
   CCQERPAReweight_tool.cc
   FSIReweight_tool.cc
   WSReweight_tool.cc
+  QEInterference_tool.cc
   MECq0q3InterpWeighting_tool.cc
   )
 
@@ -38,6 +39,7 @@ SET(SYSTP_HDRFILES
   CCQERPAReweight_tool.hh
   FSIReweight_tool.hh
   WSReweight_tool.hh
+  QEInterference_tool.hh
   MECq0q3InterpWeighting_tool.hh
 )
 
