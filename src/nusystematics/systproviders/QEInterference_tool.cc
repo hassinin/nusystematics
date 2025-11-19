@@ -199,13 +199,11 @@ event_unit_response_t QEInterference::GetEventResponse(genie::EventRecord const 
   for( auto param : systs ) {
     resp.push_back({param.systParamId, {}});
     // Figure out if this is the correct q0 bin to use
-    std::cout << Q0 << std::endl;
     if(q0BinEdges[iSyst+1] < Q0 || q0BinEdges[iSyst] >= Q0) { // Default response
       std::vector<double> vec(param.paramVariations.size(), 1.0);
       resp.back().responses = vec; 
     } else {
       std::vector<double> vec;
-      std::cout << "Picking iSyst = " << iSyst << std::endl;
       for( const double & twk : param.paramVariations ) {
 	double this_reweight = std::max( 0.0, (1.0 - twk) + twk * raw_response );
 	vec.push_back(this_reweight);
