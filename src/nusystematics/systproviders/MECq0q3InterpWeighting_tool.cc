@@ -333,12 +333,6 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
 
   // NEW: q3 apply window gate: ZERO weight if outside (q3min, q3max) - CHECK BEFORE ENERGY GUARD
   if (q3 <= fQ3ApplyMin + 1e-6 || q3 >= fQ3ApplyMax - 1e-6) {
-    static int debug_count = 0;
-    if (debug_count < 10) {
-      std::cout << "[DEBUG] Suppressing event: q3=" << q3 << " (q3min=" << fQ3ApplyMin 
-                << ", q3max=" << fQ3ApplyMax << "), q0=" << q0 << ", Enu=" << Enu << std::endl;
-      debug_count++;
-    }
     return GetZeroWeightResponse();
   }
 
