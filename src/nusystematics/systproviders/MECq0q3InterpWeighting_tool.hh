@@ -57,10 +57,12 @@ private:
   double fQ3ApplyMin{0.0};                                   // GeV
   double fQ3ApplyMax{std::numeric_limits<double>::infinity()}; // GeV
 
-  // Ramp guard: unity below Min; linear blend to full weight by Max
-  // If Max == Min, behaves like a hard cutoff at Min
-  double fQ0GuardMin{0.0};  // GeV
-  double fQ0GuardMax{0.0};  // GeV
+  // NEW: Additional Q0 selection range for fine-grained control
+  // If set, reweighting is applied ONLY in this range; outside it, weight=1
+  // This is independent of Q0ApplyMin/Q0ApplyMax above
+  // Defaults: disabled (both 0.0 means no selection)
+  double fQ0SelectMin{0.0};  // GeV
+  double fQ0SelectMax{0.0};  // GeV
 
   // Energy-guard window and snapping
   // Only energies within [fEnuMin, fEnuMax] are reweighted.
