@@ -1,7 +1,7 @@
-MECInterp: {
+SuSAv2ToMartini_MECInterp: {
 
   tool_type: "MECq0q3InterpWeighting"
-  instance_name: "SBNNuSyst"
+  instance_name: "SuSAv2ToMartini"
 
   # Define the systematic parameter (dial) for interpolation weighting
   # central value 0, evaluate at -1, 0, +1 (can expand later)
@@ -54,43 +54,43 @@ MECInterp: {
     Q0SelectMax: 0.0    # GeV (0.0 = disabled)
 
   EnuMin:       0.4
-  EnuMax:       2.5
-  EnuSnapTol:   0.005
+    EnuMax:       2.5
+    EnuSnapTol:   0.005
 
-  HistNameNP: "h_weights_map;1"
-  HistNameNN: "h_weights_map;1"
-  MapIsQ3xQ0: true
+    HistNameNP: "h_weights_map;1"
+    HistNameNN: "h_weights_map;1"
+    MapIsQ3xQ0: true
 
-  # UseNearestBin: when true, picks the nearest histogram bin (causes
-  # step/discontinuous jumps). Prefer interpolation when possible.
-  UseNearestBin: false
+    # UseNearestBin: when true, picks the nearest histogram bin (causes
+    # step/discontinuous jumps). Prefer interpolation when possible.
+    UseNearestBin: false
 
-  # EdgeClamp: when true, clamps q0/q3 lookups to the histogram edges
-  # instead of extrapolating or using empty bins. Enabling this reduces
-  # large discontinuities and suppresses artificial peaks at the edges.
-  EdgeClamp: true
+    # EdgeClamp: when true, clamps q0/q3 lookups to the histogram edges
+    # instead of extrapolating or using empty bins. Enabling this reduces
+    # large discontinuities and suppresses artificial peaks at the edges.
+    EdgeClamp: true
 
-  # OutOfRangeWeight: weight to return for events outside histogram bounds.
-  # Default behavior (auto-determined by Model):
-  #   - valencia: 0.0 (suppress events beyond histogram range)
-  #   - martini:  0.0 (suppress events beyond histogram range)
-  #   - custom:   1.0 (keep original prediction, backward compatible)
-  # Explicitly set to override auto-detection:
-  OutOfRangeWeight: 0.0
+    # OutOfRangeWeight: weight to return for events outside histogram bounds.
+    # Default behavior (auto-determined by Model):
+    #   - valencia: 0.0 (suppress events beyond histogram range)
+    #   - martini:  0.0 (suppress events beyond histogram range)
+    #   - custom:   1.0 (keep original prediction, backward compatible)
+    # Explicitly set to override auto-detection:
+    OutOfRangeWeight: 0.0
 
-  # IMPORTANT: OutOfRangeWeight applies to events outside HISTOGRAM bounds.
-  # For physics-based cutoffs, use Q0ApplyMax/Q3ApplyMax above:
-  #
-  # Valencia limits (both q0 and q3 limited to 1.2 GeV):
-  #   Q0ApplyMax: 1.2  ->  weight=1.0 for q0>=1.2 GeV
-  #   Q3ApplyMax: 1.2  ->  weight=1.0 for q3>=1.2 GeV
-  #
-  # Martini limits (q0 limited to 0.995 GeV, q3 good to ~2.0 GeV):
-  #   Q0ApplyMax: 0.995  ->  weight=1.0 for q0>=0.995 GeV
-  #   Q3ApplyMax: 3.0    ->  effectively no q3 limit (Martini has good coverage)
+    # IMPORTANT: OutOfRangeWeight applies to events outside HISTOGRAM bounds.
+    # For physics-based cutoffs, use Q0ApplyMax/Q3ApplyMax above:
+    #
+    # Valencia limits (both q0 and q3 limited to 1.2 GeV):
+    #   Q0ApplyMax: 1.2  ->  weight=1.0 for q0>=1.2 GeV
+    #   Q3ApplyMax: 1.2  ->  weight=1.0 for q3>=1.2 GeV
+    #
+    # Martini limits (q0 limited to 0.995 GeV, q3 good to ~2.0 GeV):
+    #   Q0ApplyMax: 0.995  ->  weight=1.0 for q0>=0.995 GeV
+    #   Q3ApplyMax: 3.0    ->  effectively no q3 limit (Martini has good coverage)
 
   }
 
 }
 
-syst_providers : [MECInterp]
+syst_providers : [SuSAv2ToMartini_MECInterp]

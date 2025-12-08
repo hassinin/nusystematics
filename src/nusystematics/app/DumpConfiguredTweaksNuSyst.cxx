@@ -99,7 +99,7 @@ struct TweakSummaryTree {
   int meta_n;
   std::vector<double> meta_tweak_values;
 
-  void AddBranches(ParamHeaderHelper const &phh) {
+  void AddBranches(response_helper &phh) {
     
     // TH: Add branches for output weights tree
     t->Branch("Mode", &Mode, "Mode/I");
@@ -178,22 +178,36 @@ struct TweakSummaryTree {
         }
         size_t idx = tweak_indices[pid];
 
+        // Find the IGENIESystProvider_tool(ISystProviderTool) for this pid
+        int matched_idx_sp = -1;
+        for(int idx_sp=0; idx_sp<phh.GetSystProvider().size(); idx_sp++){
+          if(phh.GetSystProvider()[idx_sp]->ParamIsHandled(pid)){
+            matched_idx_sp = idx_sp;
+          }
+        }
+        if(matched_idx_sp<0){
+          printf("[WeightUpdater::CreateGlobalTree] IGENIESystProvider_tool not found from pid = %d\n", int(pid));
+          abort();
+        }
+
+        std::string this_full_name = phh.GetSystProvider()[matched_idx_sp]->GetFullyQualifiedName()+"_"+hdr.prettyName;
+
         std::stringstream ss_ntwk("");
-        ss_ntwk << "ntweaks_" << hdr.prettyName;
+        ss_ntwk << "ntweaks_" << this_full_name;
         t->Branch(ss_ntwk.str().c_str(), &ntweaks[idx],
                   (ss_ntwk.str() + "/I").c_str());
 
         std::stringstream ss_twkr("");
-        ss_twkr << "tweak_responses_" << hdr.prettyName;
+        ss_twkr << "tweak_responses_" << this_full_name;
         t->Branch(ss_twkr.str().c_str(), tweak_branches[idx].data(),
                   (ss_twkr.str() + "[" + ss_ntwk.str() + "]/D").c_str());
 
         std::stringstream ss_twkcv("");
-        ss_twkcv << "paramCVWeight_" << hdr.prettyName;
+        ss_twkcv << "paramCVWeight_" << this_full_name;
         t->Branch(ss_twkcv.str().c_str(), &paramCVResponses[idx],
                   (ss_twkcv.str() + "/D").c_str());
 
-        *meta_name = hdr.prettyName.c_str();
+        *meta_name = this_full_name.c_str();
         meta_n = ntweaks[idx];
         // For a correction dial, hdr.paramVariations is empty, so manually fill the vector
         if (hdr.isCorrection) {
