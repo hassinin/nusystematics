@@ -329,18 +329,28 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
     return resp;
   };
 
-  // NEW: q3 apply window gate: ZERO weight if outside (q3min, q3max) - CHECK BEFORE ENERGY GUARD
-  if (q3 <= fQ3ApplyMin + 1e-6 || q3 >= fQ3ApplyMax - 1e-6) {
-    return GetZeroWeightResponse();
-  }
+  // Determine if Q0 selection range is enabled
+  const bool q0SelectionEnabled = (fQ0SelectMax > 0.0);
 
-  // NEW: q0 apply window gate: ZERO weight if outside (q0min, q0max)
-  if (q0 <= fQ0ApplyMin + 1e-6 || q0 >= fQ0ApplyMax - 1e-6)
-    return GetZeroWeightResponse();
+  // NEW: q3/q0 apply window gate logic
+  // If Q0 selection is ENABLED: return weight=1 if outside apply windows
+  // If Q0 selection is DISABLED: return weight=0 if outside apply windows
+  const bool outsideQ3Apply = (q3 <= fQ3ApplyMin + 1e-6 || q3 >= fQ3ApplyMax - 1e-6);
+  const bool outsideQ0Apply = (q0 <= fQ0ApplyMin + 1e-6 || q0 >= fQ0ApplyMax - 1e-6);
+  
+  if (outsideQ3Apply || outsideQ0Apply) {
+    if (q0SelectionEnabled) {
+      // When Q0 selection is enabled, return weight=1 outside apply region
+      return this->GetDefaultEventResponse();
+    } else {
+      // When Q0 selection is disabled, return weight=0 outside apply region
+      return GetZeroWeightResponse();
+    }
+  }
 
   // NEW: Q0 selection range: weight=1 if outside the selected range (if enabled)
   // This allows fine-grained control: e.g., apply reweight only in 0.05 < q0 < 0.1 GeV
-  if (fQ0SelectMax > 0.0) {  // Selection is enabled
+  if (q0SelectionEnabled) {
     if (q0 < fQ0SelectMin - 1e-6 || q0 > fQ0SelectMax + 1e-6) {
       return this->GetDefaultEventResponse();  // weight=1 outside selection range
     }
