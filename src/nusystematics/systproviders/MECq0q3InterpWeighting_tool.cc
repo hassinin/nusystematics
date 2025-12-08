@@ -115,20 +115,19 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
   if (!(fQ3ApplyMax > fQ3ApplyMin))
     throw std::runtime_error("Q3ApplyMax must be > Q3ApplyMin");
 
-
-
-
-
-  // q0 ramp guard (optional)
-  fQ0GuardMin = manifest.get<double>("Q0GuardMin", 0.0);
-  fQ0GuardMax = manifest.get<double>("Q0GuardMax", fQ0GuardMin);
-  if (!(std::isfinite(fQ0GuardMin) && fQ0GuardMin >= 0.0))
-    throw std::runtime_error("Q0GuardMin must be finite and >= 0");
-  if (!(std::isfinite(fQ0GuardMax) && fQ0GuardMax >= fQ0GuardMin))
-    throw std::runtime_error("Q0GuardMax must be finite and >= Q0GuardMin");
-
-  
-
+  // NEW: Q0 selection range (optional, defaults to disabled)
+  fQ0SelectMin = manifest.get<double>("Q0SelectMin", 0.0);
+  fQ0SelectMax = manifest.get<double>("Q0SelectMax", 0.0);
+  if (!(std::isfinite(fQ0SelectMin) && fQ0SelectMin >= 0.0))
+    throw std::runtime_error("Q0SelectMin must be finite and >= 0");
+  if (!(std::isfinite(fQ0SelectMax) && fQ0SelectMax >= 0.0))
+    throw std::runtime_error("Q0SelectMax must be finite and >= 0");
+  // If both are zero, selection is disabled; otherwise Max must be > Min
+  if (fQ0SelectMax > 0.0 && fQ0SelectMax <= fQ0SelectMin)
+    throw std::runtime_error("Q0SelectMax must be > Q0SelectMin when enabled");
+  if (fQ0SelectMin > 0.0 || fQ0SelectMax > 0.0) {
+    std::cout << "  Q0 selection range enabled: [" << fQ0SelectMin << ", " << fQ0SelectMax << "] GeV\n";
+  }
 
   // Energy window & snap tolerance (defaults implement your request)
   fEnuMin     = manifest.get<double>("EnuMin",     0.4);
@@ -169,7 +168,6 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
 
   std::cout << "  EnergyGrid size: " << fEgrid.size() << "\n"
             << "  WeightLimits   : [" << fWmin << ", " << fWmax << "]\n"
-            << "  Q0Guard Min/Max: " << fQ0GuardMin << " / " << fQ0GuardMax << " GeV\n"
             << "  Enu window     : [" << fEnuMin << ", " << fEnuMax << "] GeV\n"
             << "  Enu snap tol   : " << fEnuSnapTol << " GeV\n";
 
@@ -340,12 +338,16 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
   if (q0 <= fQ0ApplyMin + 1e-6 || q0 >= fQ0ApplyMax - 1e-6)
     return GetZeroWeightResponse();
 
+  // NEW: Q0 selection range: weight=1 if outside the selected range (if enabled)
+  // This allows fine-grained control: e.g., apply reweight only in 0.05 < q0 < 0.1 GeV
+  if (fQ0SelectMax > 0.0) {  // Selection is enabled
+    if (q0 < fQ0SelectMin - 1e-6 || q0 > fQ0SelectMax + 1e-6) {
+      return this->GetDefaultEventResponse();  // weight=1 outside selection range
+    }
+  }
+
   // Energy guard: weight=1 outside [fEnuMin, fEnuMax] (after q3/q0 gates)
   if (Enu < fEnuMin - 1e-6 || Enu > fEnuMax + 1e-6)
-    return this->GetDefaultEventResponse();
-
-  // q0 guard: unity below GuardMin (for events that passed q3/q0 apply gates)
-  if (q0 <= fQ0GuardMin + 1e-6)
     return this->GetDefaultEventResponse();
 
   // find bracketing energies (handles mono grid too)
@@ -376,13 +378,8 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
   const double w_hi = vec[ih]->GetCentralWeight(q0, q3);
   const double w_blend = (1.0 - t) * w_lo + t * w_hi;
 
-  // ramp in q0: w_eff = 1 + alpha * (w_blend - 1)
-  double alpha = 1.0;
-  if (fQ0GuardMax > fQ0GuardMin && q0 < fQ0GuardMax)
-    alpha = std::clamp((q0 - fQ0GuardMin) / (fQ0GuardMax - fQ0GuardMin), 0.0, 1.0);
-
-  const double w_eff_cv = std::clamp(1.0 + alpha * (w_blend - 1.0), fWmin, fWmax);
-  const double one_sigma = (std::clamp(w_blend, fWmin, fWmax) - 1.0); // for variations
+  const double w_eff_cv = std::clamp(w_blend, fWmin, fWmax);
+  const double one_sigma = (w_eff_cv - 1.0); // for variations
 
   // Build response vector
   systtools::event_unit_response_t response;
@@ -392,7 +389,7 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
     pr.pid = hdr.systParamId;
     pr.responses.reserve(hdr.paramVariations.size());
     for (double d : hdr.paramVariations) {
-      const double rw = std::clamp(1.0 + d * alpha * one_sigma, fWmin, fWmax);
+      const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
       pr.responses.push_back(rw);
     }
     if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);

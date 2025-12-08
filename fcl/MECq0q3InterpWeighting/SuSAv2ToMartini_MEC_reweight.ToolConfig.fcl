@@ -45,15 +45,15 @@ SuSAv2ToMartini_MECInterp: {
     Q3ApplyMin: 0.0     # GeV
     Q3ApplyMax: 2.0     # GeV (Valencia: 1.2, Martini: 2.0)
 
-    Q0GuardMin: 0.0            
+    # NEW: Q0 selection range (fine-grained control)
+    # If both are 0, selection is disabled and reweighting applies to all q0
+    # If set, reweighting is applied ONLY in this range; outside it, weight=1
+    # Example: Q0SelectMin: 0.05, Q0SelectMax: 0.1  -> reweight only 0.05-0.1 GeV
+    # This is independent of Q0ApplyMin/Q0ApplyMax above
+    Q0SelectMin: 0.0    # GeV (0.0 = disabled)
+    Q0SelectMax: 0.0    # GeV (0.0 = disabled)
 
-    # Small guard window to avoid strong extrapolation at the Q0 lower edge.
-    # This clamps/guards low-q0 lookups to a small positive q0 to reduce
-    # artificial spikes coming from empty/near-zero bins in the source maps.
-    Q0GuardMin: 0.02   # GeV (20 MeV)
-    Q0GuardMax: 0.03   # GeV
-
-    EnuMin:       0.4
+  EnuMin:       0.4
     EnuMax:       2.5
     EnuSnapTol:   0.005
 
