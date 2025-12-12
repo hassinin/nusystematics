@@ -53,7 +53,7 @@ SuSAv2ToValenica_MECInterp: {
     Q0SelectMin: 0.0    # GeV (0.0 = disabled)
     Q0SelectMax: 0.0    # GeV (0.0 = disabled)
 
-  EnuMin:       0.4
+    EnuMin:       0.4
     EnuMax:       2.5
     EnuSnapTol:   0.005
 
