@@ -64,6 +64,12 @@ private:
   double fQ0SelectMin{0.0};  // GeV
   double fQ0SelectMax{0.0};  // GeV
 
+  // NEW: Q0 binning for multiple dials
+  // If Q0Bins is provided, each bin gets its own dial
+  // Format: [edge0, edge1, edge2, ...] creates bins [edge0,edge1), [edge1,edge2), ...
+  // Empty vector means single dial mode (backward compatible)
+  std::vector<double> fQ0Bins;  // GeV bin edges
+  
   // Energy-guard window and snapping
   // Only energies within [fEnuMin, fEnuMax] are reweighted.
   // If |Enu - grid_point| <= fEnuSnapTol, use the exact map (no blending).
@@ -73,6 +79,10 @@ private:
 
   std::unordered_map<Topo,
       std::vector<std::unique_ptr<MECq0q3ResponseCalc>>> fCalcs;
+  
+  // Helper to determine which q0 bin (dial index) an event belongs to
+  // Returns -1 if outside all bins
+  int GetQ0BinIndex(double q0) const;
 };
 
 } // namespace nusyst

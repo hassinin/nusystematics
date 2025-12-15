@@ -43,16 +43,39 @@ MECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
   std::cout << "[MECq0q3InterpWeighting::BuildSystMetaData] Called\n";
 
   SystMetaData smd;
-  SystParamHeader phdr;
-  if (ParseFhiclToolConfigurationParameter(ps,
-                                           "MECResponse",
-                                           phdr, firstId)) {
-    phdr.systParamId = firstId++;
-    smd.push_back(phdr);
+  
+  // Check if Q0 binning is enabled
+  auto man = ps.get<fhicl::ParameterSet>("MECResponse_input_manifest");
+  std::vector<double> q0Bins;
+  if (man.has_key("Q0Bins")) {
+    q0Bins = man.get<std::vector<double>>("Q0Bins");
+  }
+  
+  // If Q0 binning is enabled, create multiple dials (one per bin)
+  if (!q0Bins.empty() && q0Bins.size() >= 2) {
+    std::cout << "  Q0-binned mode: creating " << (q0Bins.size() - 1) << " dials\n";
+    
+    for (size_t i = 0; i < q0Bins.size() - 1; ++i) {
+      std::string dialName = "MECResponse_q0bin" + std::to_string(i);
+      SystParamHeader phdr;
+      if (ParseFhiclToolConfigurationParameter(ps, dialName, phdr, firstId)) {
+        phdr.systParamId = firstId++;
+        smd.push_back(phdr);
+        std::cout << "    Created dial: " << dialName 
+                  << " for q0 [" << q0Bins[i] << ", " << q0Bins[i+1] << ") GeV\n";
+      }
+    }
+  } else {
+    // Single dial mode (backward compatible)
+    std::cout << "  Single-dial mode (backward compatible)\n";
+    SystParamHeader phdr;
+    if (ParseFhiclToolConfigurationParameter(ps, "MECResponse", phdr, firstId)) {
+      phdr.systParamId = firstId++;
+      smd.push_back(phdr);
+    }
   }
 
   // stash manifest for SetupResponseCalculator
-  auto man = ps.get<fhicl::ParameterSet>("MECResponse_input_manifest");
   tool_options.put("MECResponse_input_manifest", man);
 
   return smd;
@@ -114,6 +137,32 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
     throw std::runtime_error("Q3ApplyMin must be finite and >= 0");
   if (!(fQ3ApplyMax > fQ3ApplyMin))
     throw std::runtime_error("Q3ApplyMax must be > Q3ApplyMin");
+
+  // NEW: Q0 binning for multiple dials (optional)
+  if (manifest.has_key("Q0Bins")) {
+    fQ0Bins = manifest.get<std::vector<double>>("Q0Bins");
+    if (fQ0Bins.size() < 2)
+      throw std::runtime_error("Q0Bins must have at least 2 edges to define bins");
+    
+    // Validate bins are in ascending order
+    for (size_t i = 1; i < fQ0Bins.size(); ++i) {
+      if (fQ0Bins[i] <= fQ0Bins[i-1])
+        throw std::runtime_error("Q0Bins must be in strictly ascending order");
+    }
+    
+    std::cout << "  Q0 binning enabled: " << (fQ0Bins.size() - 1) << " bins\n";
+    std::cout << "  Bin edges:";
+    for (double edge : fQ0Bins) std::cout << " " << edge;
+    std::cout << " GeV\n";
+    
+    // Q0Select range incompatible with Q0Bins (they serve different purposes)
+    if (manifest.has_key("Q0SelectMin") || manifest.has_key("Q0SelectMax")) {
+      std::cout << "  WARNING: Q0SelectMin/Max ignored when Q0Bins is set\n";
+    }
+  } else {
+    // Single dial mode - legacy Q0 selection range still works
+    fQ0Bins.clear();
+  }
 
   // NEW: Q0 selection range (optional, defaults to disabled)
   fQ0SelectMin = manifest.get<double>("Q0SelectMin", 0.0);
@@ -393,22 +442,60 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
 
   // Build response vector
   systtools::event_unit_response_t response;
-  if (!this->GetSystMetaData().empty()) {
-    const auto &hdr = this->GetSystMetaData()[0];
-    systtools::ParamResponses pr;
-    pr.pid = hdr.systParamId;
-    pr.responses.reserve(hdr.paramVariations.size());
-    for (double d : hdr.paramVariations) {
-      const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
-      pr.responses.push_back(rw);
+  
+  // Q0-binned mode: multiple dials, only one active per event
+  if (!fQ0Bins.empty()) {
+    const int q0BinIdx = GetQ0BinIndex(q0);
+    const auto& smd = this->GetSystMetaData();
+    
+    // Build response for all dials
+    for (size_t dialIdx = 0; dialIdx < smd.size(); ++dialIdx) {
+      const auto& hdr = smd[dialIdx];
+      systtools::ParamResponses pr;
+      pr.pid = hdr.systParamId;
+      pr.responses.reserve(hdr.paramVariations.size());
+      
+      // If this event is in the current dial's q0 bin, use the calculated weight
+      // Otherwise, return weight=1.0 (no effect)
+      const bool isActiveDial = (static_cast<int>(dialIdx) == q0BinIdx);
+      
+      if (isActiveDial) {
+        // Apply reweighting for this dial
+        for (double d : hdr.paramVariations) {
+          const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
+          pr.responses.push_back(rw);
+        }
+        if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
+      } else {
+        // Inactive dial: return weight=1.0
+        for (size_t i = 0; i < hdr.paramVariations.size(); ++i) {
+          pr.responses.push_back(1.0);
+        }
+        if (pr.responses.empty()) pr.responses.push_back(1.0);
+      }
+      
+      response.push_back(std::move(pr));
     }
-    if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
-    response.push_back(std::move(pr));
-  } else {
-    systtools::ParamResponses pr;
-    pr.pid = 0;
-    pr.responses = { w_eff_cv };
-    response.push_back(std::move(pr));
+  } 
+  // Single dial mode (backward compatible)
+  else {
+    if (!this->GetSystMetaData().empty()) {
+      const auto &hdr = this->GetSystMetaData()[0];
+      systtools::ParamResponses pr;
+      pr.pid = hdr.systParamId;
+      pr.responses.reserve(hdr.paramVariations.size());
+      for (double d : hdr.paramVariations) {
+        const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
+        pr.responses.push_back(rw);
+      }
+      if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
+      response.push_back(std::move(pr));
+    } else {
+      systtools::ParamResponses pr;
+      pr.pid = 0;
+      pr.responses = { w_eff_cv };
+      response.push_back(std::move(pr));
+    }
   }
 
   return response;
@@ -447,4 +534,26 @@ MECq0q3InterpWeighting::ClassifyEvent(genie::EventRecord const& ev)
     if (pdg == genie::kPdgClusterNP) return Topo::np; // 1n+1p
   }
   return Topo::unknown;
+}
+
+// Determine which q0 bin (dial index) an event belongs to
+// Returns -1 if outside all bins
+int
+MECq0q3InterpWeighting::GetQ0BinIndex(double q0) const
+{
+  if (fQ0Bins.empty()) return 0;  // Single dial mode
+  
+  // Find the bin: [edge_i, edge_{i+1})
+  for (size_t i = 0; i < fQ0Bins.size() - 1; ++i) {
+    if (q0 >= fQ0Bins[i] && q0 < fQ0Bins[i+1]) {
+      return static_cast<int>(i);
+    }
+  }
+  
+  // Special case: include upper edge in the last bin
+  if (q0 == fQ0Bins.back()) {
+    return static_cast<int>(fQ0Bins.size() - 2);
+  }
+  
+  return -1;  // Outside all bins
 }
