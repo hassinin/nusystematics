@@ -437,11 +437,35 @@ SystMetaData ConfigureFSIParameterHeaders(fhicl::ParameterSet const &cfg,
   firstParamId += FSI_N_EDep_md.size();
   ExtendSystMetaData(FSImd, std::move(FSI_N_EDep_md));
 
+  // Includes Bootstrapped (nucleon) Inelastic or Charge Exchange kinematics
   SystMetaData FSI_Kinematics = ConfigureSetOfDependentParameters(
       cfg, firstParamId, tool_options, "FSI_Kinematics",
-      {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N, 
-       kINukeKinematicsFixPiPro, kINukeKinematicsPiProBias, kINukeKinematicsPiProBiaswFix}); 
+      {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N});
   ExtendSystMetaData(FSImd, std::move(FSI_Kinematics));
+
+  // If started with a sample without the hA-PiProd-bugfix,
+  // first we fix the CV
+  SystMetaData FSI_Kinematrix_PiProFix_md = ConfigureSetOfIndependentParameters(
+      cfg, firstParamId,
+      {kINukeKinematicsFixPiPro});
+  firstParamId += FSI_Kinematrix_PiProFix_md.size();
+  ExtendSystMetaData(FSImd, std::move(FSI_Kinematrix_PiProFix_md));
+
+  // If started with a sample without the hA-PiProd-bugfix,
+  // a bias variation with the correction included?
+  SystMetaData FSI_Kinematrix_PiProBias_md = ConfigureSetOfIndependentParameters(
+      cfg, firstParamId,
+      {kINukeKinematicsPiProBias});
+  firstParamId += FSI_Kinematrix_PiProBias_md.size();
+  ExtendSystMetaData(FSImd, std::move(FSI_Kinematrix_PiProBias_md));
+
+  // If started with a sample with the hA-PiProd-bugfix,
+  // a bias variation
+  SystMetaData FSI_Kinematrix_PiProBiaswFix_md = ConfigureSetOfIndependentParameters(
+      cfg, firstParamId,
+      {kINukeKinematicsPiProBiaswFix});
+  firstParamId += FSI_Kinematrix_PiProBiaswFix_md.size();
+  ExtendSystMetaData(FSImd, std::move(FSI_Kinematrix_PiProBiaswFix_md));
 
   return FSImd;
 }
