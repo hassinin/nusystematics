@@ -441,6 +441,7 @@ SystMetaData ConfigureFSIParameterHeaders(fhicl::ParameterSet const &cfg,
   SystMetaData FSI_Kinematics = ConfigureSetOfDependentParameters(
       cfg, firstParamId, tool_options, "FSI_Kinematics",
       {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N});
+  firstParamId += FSI_Kinematics.size();
   ExtendSystMetaData(FSImd, std::move(FSI_Kinematics));
 
   // If started with a sample without the hA-PiProd-bugfix,
