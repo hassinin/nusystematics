@@ -481,7 +481,7 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
        kINukeTwkDial_G4M2E_N, kINukeTwkDial_INCLM2E_N,
        kINukeTwkDial_G4HiE_N, kINukeTwkDial_INCLHiE_N,
        kINukeTwkDial_MFPLoE_N, kINukeTwkDial_MFPM1E_N,
-       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N}, "FrKin_FixPiPro",
+       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N}, "Fr_EDep_N",
       []() { return new GReWeightINukeExtra; }, UseFullHERG, param_map);
 
   // Includes Bootstrapped (nucleon) Inelastic or Charge Exchange kinematics
