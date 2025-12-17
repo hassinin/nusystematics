@@ -473,22 +473,16 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
        kINukeTwkDial_FrAbs_N, kINukeTwkDial_FrPiProd_N},
       "INuke_N", []() { return new GReWeightINuke; }, UseFullHERG, param_map);
 
-/*
+  // Fates
   AddIndependentParameters(
-      QEmd, {kXSecTwkDial_VecFFCCQEshape}, "xsec_ccqe_vecFF",
-      []() { return new GReWeightNuXSecCCQEvec; }, UseFullHERG, param_map);
-*/
-
-  AddResponseAndDependentDials(
-      FSImd, "FSI_N_EDepVariationResponse",
-       {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
+      FSImd, {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
        kINukeTwkDial_G4LoE_N, kINukeTwkDial_INCLLoE_N,
        kINukeTwkDial_G4M1E_N, kINukeTwkDial_INCLM1E_N,
        kINukeTwkDial_G4M2E_N, kINukeTwkDial_INCLM2E_N,
        kINukeTwkDial_G4HiE_N, kINukeTwkDial_INCLHiE_N,
        kINukeTwkDial_MFPLoE_N, kINukeTwkDial_MFPM1E_N,
-       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N},
-      "INuke_N_EDep", []() { return new GReWeightINukeExtra; }, UseFullHERG, param_map);
+       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N}, "FrKin_FixPiPro",
+      []() { return new GReWeightINukeExtra; }, UseFullHERG, param_map);
 
   // Includes Bootstrapped (nucleon) Inelastic or Charge Exchange kinematics
   AddResponseAndDependentDials(
