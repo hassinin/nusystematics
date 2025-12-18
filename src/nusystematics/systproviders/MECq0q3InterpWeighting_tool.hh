@@ -57,11 +57,19 @@ private:
   double fQ3ApplyMin{0.0};                                   // GeV
   double fQ3ApplyMax{std::numeric_limits<double>::infinity()}; // GeV
 
-  // Ramp guard: unity below Min; linear blend to full weight by Max
-  // If Max == Min, behaves like a hard cutoff at Min
-  double fQ0GuardMin{0.0};  // GeV
-  double fQ0GuardMax{0.0};  // GeV
+  // NEW: Additional Q0 selection range for fine-grained control
+  // If set, reweighting is applied ONLY in this range; outside it, weight=1
+  // This is independent of Q0ApplyMin/Q0ApplyMax above
+  // Defaults: disabled (both 0.0 means no selection)
+  double fQ0SelectMin{0.0};  // GeV
+  double fQ0SelectMax{0.0};  // GeV
 
+  // NEW: Q0 binning for multiple dials
+  // If Q0Bins is provided, each bin gets its own dial
+  // Format: [edge0, edge1, edge2, ...] creates bins [edge0,edge1), [edge1,edge2), ...
+  // Empty vector means single dial mode (backward compatible)
+  std::vector<double> fQ0Bins;  // GeV bin edges
+  
   // Energy-guard window and snapping
   // Only energies within [fEnuMin, fEnuMax] are reweighted.
   // If |Enu - grid_point| <= fEnuSnapTol, use the exact map (no blending).
@@ -71,6 +79,10 @@ private:
 
   std::unordered_map<Topo,
       std::vector<std::unique_ptr<MECq0q3ResponseCalc>>> fCalcs;
+  
+  // Helper to determine which q0 bin (dial index) an event belongs to
+  // Returns -1 if outside all bins
+  int GetQ0BinIndex(double q0) const;
 };
 
 } // namespace nusyst

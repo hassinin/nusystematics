@@ -43,16 +43,39 @@ MECq0q3InterpWeighting::BuildSystMetaData(fhicl::ParameterSet const &ps,
   std::cout << "[MECq0q3InterpWeighting::BuildSystMetaData] Called\n";
 
   SystMetaData smd;
-  SystParamHeader phdr;
-  if (ParseFhiclToolConfigurationParameter(ps,
-                                           "MECResponse",
-                                           phdr, firstId)) {
-    phdr.systParamId = firstId++;
-    smd.push_back(phdr);
+  
+  // Check if Q0 binning is enabled
+  auto man = ps.get<fhicl::ParameterSet>("MECResponse_input_manifest");
+  std::vector<double> q0Bins;
+  if (man.has_key("Q0Bins")) {
+    q0Bins = man.get<std::vector<double>>("Q0Bins");
+  }
+  
+  // If Q0 binning is enabled, create multiple dials (one per bin)
+  if (!q0Bins.empty() && q0Bins.size() >= 2) {
+    std::cout << "  Q0-binned mode: creating " << (q0Bins.size() - 1) << " dials\n";
+    
+    for (size_t i = 0; i < q0Bins.size() - 1; ++i) {
+      std::string dialName = "MECResponse_q0bin" + std::to_string(i);
+      SystParamHeader phdr;
+      if (ParseFhiclToolConfigurationParameter(ps, dialName, phdr, firstId)) {
+        phdr.systParamId = firstId++;
+        smd.push_back(phdr);
+        std::cout << "    Created dial: " << dialName 
+                  << " for q0 [" << q0Bins[i] << ", " << q0Bins[i+1] << ") GeV\n";
+      }
+    }
+  } else {
+    // Single dial mode (backward compatible)
+    std::cout << "  Single-dial mode (backward compatible)\n";
+    SystParamHeader phdr;
+    if (ParseFhiclToolConfigurationParameter(ps, "MECResponse", phdr, firstId)) {
+      phdr.systParamId = firstId++;
+      smd.push_back(phdr);
+    }
   }
 
   // stash manifest for SetupResponseCalculator
-  auto man = ps.get<fhicl::ParameterSet>("MECResponse_input_manifest");
   tool_options.put("MECResponse_input_manifest", man);
 
   return smd;
@@ -115,20 +138,45 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
   if (!(fQ3ApplyMax > fQ3ApplyMin))
     throw std::runtime_error("Q3ApplyMax must be > Q3ApplyMin");
 
+  // NEW: Q0 binning for multiple dials (optional)
+  if (manifest.has_key("Q0Bins")) {
+    fQ0Bins = manifest.get<std::vector<double>>("Q0Bins");
+    if (fQ0Bins.size() < 2)
+      throw std::runtime_error("Q0Bins must have at least 2 edges to define bins");
+    
+    // Validate bins are in ascending order
+    for (size_t i = 1; i < fQ0Bins.size(); ++i) {
+      if (fQ0Bins[i] <= fQ0Bins[i-1])
+        throw std::runtime_error("Q0Bins must be in strictly ascending order");
+    }
+    
+    std::cout << "  Q0 binning enabled: " << (fQ0Bins.size() - 1) << " bins\n";
+    std::cout << "  Bin edges:";
+    for (double edge : fQ0Bins) std::cout << " " << edge;
+    std::cout << " GeV\n";
+    
+    // Q0Select range incompatible with Q0Bins (they serve different purposes)
+    if (manifest.has_key("Q0SelectMin") || manifest.has_key("Q0SelectMax")) {
+      std::cout << "  WARNING: Q0SelectMin/Max ignored when Q0Bins is set\n";
+    }
+  } else {
+    // Single dial mode - legacy Q0 selection range still works
+    fQ0Bins.clear();
+  }
 
-
-
-
-  // q0 ramp guard (optional)
-  fQ0GuardMin = manifest.get<double>("Q0GuardMin", 0.0);
-  fQ0GuardMax = manifest.get<double>("Q0GuardMax", fQ0GuardMin);
-  if (!(std::isfinite(fQ0GuardMin) && fQ0GuardMin >= 0.0))
-    throw std::runtime_error("Q0GuardMin must be finite and >= 0");
-  if (!(std::isfinite(fQ0GuardMax) && fQ0GuardMax >= fQ0GuardMin))
-    throw std::runtime_error("Q0GuardMax must be finite and >= Q0GuardMin");
-
-  
-
+  // NEW: Q0 selection range (optional, defaults to disabled)
+  fQ0SelectMin = manifest.get<double>("Q0SelectMin", 0.0);
+  fQ0SelectMax = manifest.get<double>("Q0SelectMax", 0.0);
+  if (!(std::isfinite(fQ0SelectMin) && fQ0SelectMin >= 0.0))
+    throw std::runtime_error("Q0SelectMin must be finite and >= 0");
+  if (!(std::isfinite(fQ0SelectMax) && fQ0SelectMax >= 0.0))
+    throw std::runtime_error("Q0SelectMax must be finite and >= 0");
+  // If both are zero, selection is disabled; otherwise Max must be > Min
+  if (fQ0SelectMax > 0.0 && fQ0SelectMax <= fQ0SelectMin)
+    throw std::runtime_error("Q0SelectMax must be > Q0SelectMin when enabled");
+  if (fQ0SelectMin > 0.0 || fQ0SelectMax > 0.0) {
+    std::cout << "  Q0 selection range enabled: [" << fQ0SelectMin << ", " << fQ0SelectMax << "] GeV\n";
+  }
 
   // Energy window & snap tolerance (defaults implement your request)
   fEnuMin     = manifest.get<double>("EnuMin",     0.4);
@@ -169,7 +217,6 @@ MECq0q3InterpWeighting::SetupResponseCalculator(fhicl::ParameterSet const &tool_
 
   std::cout << "  EnergyGrid size: " << fEgrid.size() << "\n"
             << "  WeightLimits   : [" << fWmin << ", " << fWmax << "]\n"
-            << "  Q0Guard Min/Max: " << fQ0GuardMin << " / " << fQ0GuardMax << " GeV\n"
             << "  Enu window     : [" << fEnuMin << ", " << fEnuMax << "] GeV\n"
             << "  Enu snap tol   : " << fEnuSnapTol << " GeV\n";
 
@@ -315,12 +362,7 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
   double q0 = 0.0, q3 = 0.0, Enu = 0.0;
   ComputeQ0Q3(ev, q0, q3, Enu);
 
-  // Energy guard: weight=1 outside [fEnuMin, fEnuMax]
-  if (Enu < fEnuMin - 1e-6 || Enu > fEnuMax + 1e-6)
-    return this->GetDefaultEventResponse();
-
   // Helper lambda to create zero-weight response (suppress events)
-
   auto GetZeroWeightResponse = [this]() {
     auto const& smd = this->GetSystMetaData();
     systtools::event_unit_response_t resp;
@@ -336,17 +378,37 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
     return resp;
   };
 
-  // NEW: q0 apply window gate: ZERO weight if outside (q0min, q0max)
-  if (q0 <= fQ0ApplyMin + 1e-6 || q0 >= fQ0ApplyMax - 1e-6)
-    return GetZeroWeightResponse();
+  // Determine if Q0 selection/binning is enabled
+  // Either Q0SelectMin/Max OR Q0Bins means we want weight=1 outside apply windows
+  const bool q0SelectionEnabled = (fQ0SelectMax > 0.0);
+  const bool q0BinningEnabled = (!fQ0Bins.empty());
 
-  // NEW: q3 apply window gate: ZERO weight if outside (q3min, q3max)
-  if (q3 <= fQ3ApplyMin + 1e-6 || q3 >= fQ3ApplyMax - 1e-6)
-    return GetZeroWeightResponse();
+  // NEW: q3/q0 apply window gate logic
+  // If Q0 selection OR Q0 binning is ENABLED: return weight=1 if outside apply windows
+  // If BOTH are DISABLED: return weight=0 if outside apply windows
+  const bool outsideQ3Apply = (q3 <= fQ3ApplyMin + 1e-6 || q3 >= fQ3ApplyMax - 1e-6);
+  const bool outsideQ0Apply = (q0 <= fQ0ApplyMin + 1e-6 || q0 >= fQ0ApplyMax - 1e-6);
+  
+  if (outsideQ3Apply || outsideQ0Apply) {
+    if (q0SelectionEnabled || q0BinningEnabled) {
+      // When Q0 selection or binning is enabled, return weight=1 outside apply region
+      return this->GetDefaultEventResponse();
+    } else {
+      // When both are disabled, return weight=0 outside apply region
+      return GetZeroWeightResponse();
+    }
+  }
 
+  // NEW: Q0 selection range: weight=1 if outside the selected range (if enabled)
+  // This allows fine-grained control: e.g., apply reweight only in 0.05 < q0 < 0.1 GeV
+  if (q0SelectionEnabled) {
+    if (q0 < fQ0SelectMin - 1e-6 || q0 > fQ0SelectMax + 1e-6) {
+      return this->GetDefaultEventResponse();  // weight=1 outside selection range
+    }
+  }
 
-  // q0 guard: unity below Min (inclusive with epsilon)
-  if (q0 <= fQ0GuardMin + 1e-6)
+  // Energy guard: weight=1 outside [fEnuMin, fEnuMax] (after q3/q0 gates)
+  if (Enu < fEnuMin - 1e-6 || Enu > fEnuMax + 1e-6)
     return this->GetDefaultEventResponse();
 
   // find bracketing energies (handles mono grid too)
@@ -377,32 +439,65 @@ MECq0q3InterpWeighting::GetEventResponse(genie::EventRecord const& ev)
   const double w_hi = vec[ih]->GetCentralWeight(q0, q3);
   const double w_blend = (1.0 - t) * w_lo + t * w_hi;
 
-  // ramp in q0: w_eff = 1 + alpha * (w_blend - 1)
-  double alpha = 1.0;
-  if (fQ0GuardMax > fQ0GuardMin && q0 < fQ0GuardMax)
-    alpha = std::clamp((q0 - fQ0GuardMin) / (fQ0GuardMax - fQ0GuardMin), 0.0, 1.0);
-
-  const double w_eff_cv = std::clamp(1.0 + alpha * (w_blend - 1.0), fWmin, fWmax);
-  const double one_sigma = (std::clamp(w_blend, fWmin, fWmax) - 1.0); // for variations
+  const double w_eff_cv = std::clamp(w_blend, fWmin, fWmax);
+  const double one_sigma = (w_eff_cv - 1.0); // for variations
 
   // Build response vector
   systtools::event_unit_response_t response;
-  if (!this->GetSystMetaData().empty()) {
-    const auto &hdr = this->GetSystMetaData()[0];
-    systtools::ParamResponses pr;
-    pr.pid = hdr.systParamId;
-    pr.responses.reserve(hdr.paramVariations.size());
-    for (double d : hdr.paramVariations) {
-      const double rw = std::clamp(1.0 + d * alpha * one_sigma, fWmin, fWmax);
-      pr.responses.push_back(rw);
+  
+  // Q0-binned mode: multiple dials, only one active per event
+  if (!fQ0Bins.empty()) {
+    const int q0BinIdx = GetQ0BinIndex(q0);
+    const auto& smd = this->GetSystMetaData();
+    
+    // Build response for all dials
+    for (size_t dialIdx = 0; dialIdx < smd.size(); ++dialIdx) {
+      const auto& hdr = smd[dialIdx];
+      systtools::ParamResponses pr;
+      pr.pid = hdr.systParamId;
+      pr.responses.reserve(hdr.paramVariations.size());
+      
+      // If this event is in the current dial's q0 bin, use the calculated weight
+      // Otherwise, return weight=1.0 (no effect)
+      const bool isActiveDial = (static_cast<int>(dialIdx) == q0BinIdx);
+      
+      if (isActiveDial) {
+        // Apply reweighting for this dial
+        for (double d : hdr.paramVariations) {
+          const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
+          pr.responses.push_back(rw);
+        }
+        if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
+      } else {
+        // Inactive dial: return weight=1.0
+        for (size_t i = 0; i < hdr.paramVariations.size(); ++i) {
+          pr.responses.push_back(1.0);
+        }
+        if (pr.responses.empty()) pr.responses.push_back(1.0);
+      }
+      
+      response.push_back(std::move(pr));
     }
-    if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
-    response.push_back(std::move(pr));
-  } else {
-    systtools::ParamResponses pr;
-    pr.pid = 0;
-    pr.responses = { w_eff_cv };
-    response.push_back(std::move(pr));
+  } 
+  // Single dial mode (backward compatible)
+  else {
+    if (!this->GetSystMetaData().empty()) {
+      const auto &hdr = this->GetSystMetaData()[0];
+      systtools::ParamResponses pr;
+      pr.pid = hdr.systParamId;
+      pr.responses.reserve(hdr.paramVariations.size());
+      for (double d : hdr.paramVariations) {
+        const double rw = std::clamp(1.0 + d * one_sigma, fWmin, fWmax);
+        pr.responses.push_back(rw);
+      }
+      if (pr.responses.empty()) pr.responses.push_back(w_eff_cv);
+      response.push_back(std::move(pr));
+    } else {
+      systtools::ParamResponses pr;
+      pr.pid = 0;
+      pr.responses = { w_eff_cv };
+      response.push_back(std::move(pr));
+    }
   }
 
   return response;
@@ -441,4 +536,26 @@ MECq0q3InterpWeighting::ClassifyEvent(genie::EventRecord const& ev)
     if (pdg == genie::kPdgClusterNP) return Topo::np; // 1n+1p
   }
   return Topo::unknown;
+}
+
+// Determine which q0 bin (dial index) an event belongs to
+// Returns -1 if outside all bins
+int
+MECq0q3InterpWeighting::GetQ0BinIndex(double q0) const
+{
+  if (fQ0Bins.empty()) return 0;  // Single dial mode
+  
+  // Find the bin: [edge_i, edge_{i+1})
+  for (size_t i = 0; i < fQ0Bins.size() - 1; ++i) {
+    if (q0 >= fQ0Bins[i] && q0 < fQ0Bins[i+1]) {
+      return static_cast<int>(i);
+    }
+  }
+  
+  // Special case: include upper edge in the last bin
+  if (q0 == fQ0Bins.back()) {
+    return static_cast<int>(fQ0Bins.size() - 2);
+  }
+  
+  return -1;  // Outside all bins
 }
