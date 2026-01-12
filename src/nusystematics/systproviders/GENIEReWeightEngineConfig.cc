@@ -6,7 +6,12 @@
 #include "RwCalculators/GReWeightFGM.h"
 #include "RwCalculators/GReWeightFZone.h"
 #include "RwCalculators/GReWeightINuke.h"
+
+#if GENIE_VERSION_CODE >= 30602
 #include "RwCalculators/GReWeightINukeExtra.h"
+#include "RwCalculators/GReWeightINukeKinematics.h"
+#endif
+
 #include "RwCalculators/GReWeightNonResonanceBkg.h"
 #include "RwCalculators/GReWeightNuXSecCCQE.h"
 #include "RwCalculators/GReWeightNuXSecCCQEaxial.h"
@@ -19,7 +24,6 @@
 #include "RwCalculators/GReWeightNuXSecNCRES.h"
 #include "RwCalculators/GReWeightResonanceDecay.h"
 #include "RwCalculators/GReWeightDeltaradAngle.h"
-#include "RwCalculators/GReWeightINukeKinematics.h"
 
 #include <functional>
 
@@ -473,6 +477,7 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
        kINukeTwkDial_FrAbs_N, kINukeTwkDial_FrPiProd_N},
       "INuke_N", []() { return new GReWeightINuke; }, UseFullHERG, param_map);
 
+#if GENIE_VERSION_CODE >= 30602
   AddResponseAndDependentDials(
       FSImd, "FSI_N_EDepVariationResponse",
        {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
@@ -489,6 +494,7 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
       {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N,
        kINukeKinematicsFixPiPro, kINukeKinematicsPiProBias, kINukeKinematicsPiProBiaswFix}, 
       "FrKin", []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
+#endif
 
   return param_map;
 }
