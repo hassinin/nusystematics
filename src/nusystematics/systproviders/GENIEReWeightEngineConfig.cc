@@ -6,7 +6,17 @@
 #include "RwCalculators/GReWeightFGM.h"
 #include "RwCalculators/GReWeightFZone.h"
 #include "RwCalculators/GReWeightINuke.h"
+
+// TODO These modules are not yet merged into tagged Reweight
+// https://github.com/GENIE-MC/Reweight/pull/44
+// https://github.com/GENIE-MC/Reweight/pull/45
+// Assuming these are activated for GENIE>=3.08.00 for now (01/12/2026),
+// but need to be updated
+#if GENIE_VERSION_CODE >= 30800
 #include "RwCalculators/GReWeightINukeExtra.h"
+#include "RwCalculators/GReWeightINukeKinematics.h"
+#endif
+
 #include "RwCalculators/GReWeightNonResonanceBkg.h"
 #include "RwCalculators/GReWeightNuXSecCCQE.h"
 #include "RwCalculators/GReWeightNuXSecCCQEaxial.h"
@@ -19,7 +29,6 @@
 #include "RwCalculators/GReWeightNuXSecNCRES.h"
 #include "RwCalculators/GReWeightResonanceDecay.h"
 #include "RwCalculators/GReWeightDeltaradAngle.h"
-#include "RwCalculators/GReWeightINukeKinematics.h"
 
 #include <functional>
 
@@ -473,9 +482,13 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
        kINukeTwkDial_FrAbs_N, kINukeTwkDial_FrPiProd_N},
       "INuke_N", []() { return new GReWeightINuke; }, UseFullHERG, param_map);
 
+#if GENIE_VERSION_CODE >= 30800
   // Fates
   AddIndependentParameters(
       FSImd, {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
+  AddResponseAndDependentDials(
+      FSImd, "FSI_N_EDepVariationResponse",
+       {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
        kINukeTwkDial_G4LoE_N, kINukeTwkDial_INCLLoE_N,
        kINukeTwkDial_G4M1E_N, kINukeTwkDial_INCLM1E_N,
        kINukeTwkDial_G4M2E_N, kINukeTwkDial_INCLM2E_N,
@@ -508,6 +521,7 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
   AddIndependentParameters(
       FSImd, {kINukeKinematicsPiProBiaswFix}, "FrKin_PiProBiaswFix",
       []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
+#endif
 
   return param_map;
 }

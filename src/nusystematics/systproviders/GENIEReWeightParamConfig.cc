@@ -425,9 +425,13 @@ SystMetaData ConfigureFSIParameterHeaders(fhicl::ParameterSet const &cfg,
   firstParamId += FSI_N_md.size();
   ExtendSystMetaData(FSImd, std::move(FSI_N_md));
 
+#if GENIE_VERSION_CODE >= 30800
   SystMetaData FSI_N_EDep_md = ConfigureSetOfIndependentParameters(
       cfg, firstParamId,
       {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
+  SystMetaData FSI_N_EDep_md = ConfigureSetOfDependentParameters(
+      cfg, firstParamId, tool_options, "FSI_N_EDep_VariationResponse",
+       {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
        kINukeTwkDial_G4LoE_N, kINukeTwkDial_INCLLoE_N,
        kINukeTwkDial_G4M1E_N, kINukeTwkDial_INCLM1E_N,
        kINukeTwkDial_G4M2E_N, kINukeTwkDial_INCLM2E_N,
@@ -467,6 +471,7 @@ SystMetaData ConfigureFSIParameterHeaders(fhicl::ParameterSet const &cfg,
       {kINukeKinematicsPiProBiaswFix});
   firstParamId += FSI_Kinematrix_PiProBiaswFix_md.size();
   ExtendSystMetaData(FSImd, std::move(FSI_Kinematrix_PiProBiaswFix_md));
+#endif
 
   return FSImd;
 }
