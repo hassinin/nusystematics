@@ -483,6 +483,9 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
       "INuke_N", []() { return new GReWeightINuke; }, UseFullHERG, param_map);
 
 #if GENIE_VERSION_CODE >= 30800
+  // Fates
+  AddIndependentParameters(
+      FSImd, {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
   AddResponseAndDependentDials(
       FSImd, "FSI_N_EDepVariationResponse",
        {kINukeTwkDial_G4_N, kINukeTwkDial_INCL_N,
@@ -491,14 +494,33 @@ ConfigureFSIWeightEngine(systtools::SystMetaData const &FSImd,
        kINukeTwkDial_G4M2E_N, kINukeTwkDial_INCLM2E_N,
        kINukeTwkDial_G4HiE_N, kINukeTwkDial_INCLHiE_N,
        kINukeTwkDial_MFPLoE_N, kINukeTwkDial_MFPM1E_N,
-       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N},
-      "INuke_N_EDep", []() { return new GReWeightINukeExtra; }, UseFullHERG, param_map);
+       kINukeTwkDial_MFPM2E_N, kINukeTwkDial_MFPHiE_N}, "Fr_EDep_N",
+      []() { return new GReWeightINukeExtra; }, UseFullHERG, param_map);
 
+  // Includes Bootstrapped (nucleon) Inelastic or Charge Exchange kinematics
   AddResponseAndDependentDials(
-      FSImd, "FSI_Kinematics", 
-      {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N,
-       kINukeKinematicsFixPiPro, kINukeKinematicsPiProBias, kINukeKinematicsPiProBiaswFix}, 
+      FSImd, "FSI_Kinematics",
+      {kINukeKinematicsTwkDial_NP_N, kINukeKinematicsTwkDial_PP_N},
       "FrKin", []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
+
+  // If started with a sample without the hA-PiProd-bugfix,
+  // first we fix the CV
+  AddIndependentParameters(
+      FSImd, {kINukeKinematicsFixPiPro}, "FrKin_FixPiPro",
+      []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
+
+  // If started with a sample without the hA-PiProd-bugfix,
+  // a bias variation with the correction included?
+  AddIndependentParameters(
+      FSImd, {kINukeKinematicsPiProBias}, "FrKin_PiProBias",
+      []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
+
+
+  // If started with a sample with the hA-PiProd-bugfix,
+  // a bias variation 
+  AddIndependentParameters(
+      FSImd, {kINukeKinematicsPiProBiaswFix}, "FrKin_PiProBiaswFix",
+      []() { return new GReWeightINukeKinematics; }, UseFullHERG, param_map);
 #endif
 
   return param_map;
