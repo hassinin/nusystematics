@@ -15,13 +15,6 @@ if(EXISTS "${CMakeModules_CMAKE_DIR}/FindGENIE3.cmake")
 endif()
 
 find_package(GENIE3 REQUIRED)
-# Parsing GENIE version
-string(REPLACE "." ";" VERSION_LIST ${GENIE_VERSION})
-list(GET VERSION_LIST 0 MAJOR)
-list(GET VERSION_LIST 1 MINOR)
-list(GET VERSION_LIST 2 PATCH)
-math(EXPR GENIE_VERSION_CODE "${MAJOR} * 10000 + ${MINOR} * 100 + ${PATCH}")
-
 
 find_package(Eigen3 3.4.0 REQUIRED)
 
