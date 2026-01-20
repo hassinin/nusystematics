@@ -58,6 +58,8 @@ if(NOT TARGET GENIE3::All)
   message(FATAL_ERROR "Expected find_package(GENIE3 REQUIRED) call to set up target GENIE3::All.")
 endif()
 
+include(CheckDialValidity)
+
 ###### Compiler set up
 add_library(nusystematics_dependencies INTERFACE)
 target_link_libraries(nusystematics_dependencies INTERFACE 
