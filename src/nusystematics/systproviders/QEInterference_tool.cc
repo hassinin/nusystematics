@@ -90,7 +90,8 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
   std::vector<double> this_q0BinEdges = cfg.get<std::vector<double>>("q0_bin_edges");
   unsigned int this_Nq0Bins = this_q0BinEdges.size()-1;
 
-  if( verbosity_level > 3 ) {
+  int this_verbosity_level = cfg.get<int>("verbosity_level", 0);
+  if( this_verbosity_level > 3 ) {
     std::cout << "[INFO]: Using bin edges: ";
     for(const auto q0BinEdge: this_q0BinEdges) std::cout << q0BinEdge << ", ";
     std::cout << std::endl;
@@ -103,7 +104,7 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
     SystParamHeader phdr;
     std::string pname = desc;
     if( ParseFhiclToolConfigurationParameter(cfg, pname, phdr, id) ) {
-      if( verbosity_level > 4 ) {
+      if( this_verbosity_level > 4 ) {
         std::cout << "[DEBUG]: Found parameter " << pname << " with id = " << id << std::endl;
       } // verbose output
       phdr.systParamId = id++; // increment id here
@@ -111,11 +112,11 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
     }
   } // loop over named parameters
 
+  tool_options.put("q0_bin_edges", this_q0BinEdges);
+
   if( !cfg.has_key("QEInterference_input_manifest") ) {
     throw invalid_ToolConfigurationFHiCL() << "No q0 bin edges!!!";
   }
-  tool_options.put("q0_bin_edges", this_q0BinEdges);
-
   ParameterSet templateManifest =
       cfg.get<ParameterSet>("QEInterference_input_manifest");
 
@@ -131,6 +132,8 @@ SystMetaData QEInterference::BuildSystMetaData(ParameterSet const & cfg,
   }
 
   tool_options.put("QEInterference_input_manifest", templateManifest);
+
+  tool_options.put("verbosity_level", this_verbosity_level);
 
   return smd;
 }
