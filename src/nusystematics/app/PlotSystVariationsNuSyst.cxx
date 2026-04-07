@@ -912,6 +912,36 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
           sh.h_var[i]->Draw("HIST SAME");
         }
 
+        // Compute chi2/NDF and max fractional shift across all variations.
+        // Display-only: histograms are NOT modified, no bins are filtered out.
+        // Bins with h_cv == 0 are skipped from the max calculation because
+        // the fractional shift is mathematically undefined there.
+        double max_chi2_ndf = 0;
+        double max_frac_shift = 0;
+        int nbins_x = sh.h_cv->GetNbinsX();
+        for (int i = 0; i < (int)sh.h_var.size(); ++i) {
+          double chi2 = sh.h_cv->Chi2Test(sh.h_var[i], "WW CHI2/NDF");
+          if (std::isfinite(chi2) && chi2 > max_chi2_ndf) max_chi2_ndf = chi2;
+          for (int b = 1; b <= nbins_x; ++b) {
+            double cv_val = sh.h_cv->GetBinContent(b);
+            if (cv_val == 0) continue;
+            double var_val = sh.h_var[i]->GetBinContent(b);
+            double frac = std::abs(var_val - cv_val) / std::abs(cv_val);
+            if (frac > max_frac_shift) max_frac_shift = frac;
+          }
+        }
+
+        // Draw stats box in upper-left of main pad
+        TLatex stats;
+        stats.SetNDC();
+        stats.SetTextSize(0.055);
+        stats.SetTextFont(42);
+        stats.SetTextAlign(13); // top-left
+        stats.DrawLatex(0.19, 0.92,
+                         Form("#chi^{2}_{max}/ndf = %.2f", max_chi2_ndf));
+        stats.DrawLatex(0.19, 0.85,
+                         Form("max|#Delta|/CV = %.1f%%", max_frac_shift * 100));
+
         // Ratio pad
         c->cd();
         TPad *pratio = new TPad(Form("r%d", iv), "", x1, y_bot, x2, y_split);

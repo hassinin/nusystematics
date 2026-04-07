@@ -2,6 +2,8 @@ LIST(APPEND TARGETS_TO_BUILD
 GenerateSystProviderConfigNuSyst
 DumpConfiguredTweaksNuSyst
 PlotSystVariationsNuSyst
+DeclaredDialTestNuSyst
+DumpDialResponseNuSyst
 )
 
 foreach(targ ${TARGETS_TO_BUILD})
