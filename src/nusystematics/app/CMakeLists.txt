@@ -4,6 +4,7 @@ DumpConfiguredTweaksNuSyst
 PlotSystVariationsNuSyst
 DeclaredDialTestNuSyst
 DumpDialResponseNuSyst
+GenerateAllDialsConfigNuSyst
 )
 
 foreach(targ ${TARGETS_TO_BUILD})
