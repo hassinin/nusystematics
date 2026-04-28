@@ -185,9 +185,6 @@ namespace nusyst {
         }
       }
 
-      // clip
-      weight = std::min(weight, 100.);
-
       return weight;
     }
 
