@@ -13,6 +13,7 @@
 
 #include "nusystematics/utility/GENIEUtils.hh"
 #include "nusystematics/utility/response_helper.hh"
+#include "nusystematics/utility/silence_genie.hh"
 
 #include "fhiclcpp/ParameterSet.h"
 
@@ -167,7 +168,12 @@ struct DialInfo {
   double central;
   bool is_correction;
   bool is_natural;
-  std::vector<double> grid; // x-values (sigma or natural) where we evaluate
+  bool is_splineable;
+  bool is_weight_syst;
+  std::array<double, 2> oneSigmaShifts;     // {down, up}
+  std::array<double, 2> validityRange;      // {min, max}
+  std::vector<double> paramVariations;       // original from fhicl
+  std::vector<double> grid;                  // x-values where we evaluate
 };
 
 struct EventRef {
@@ -189,8 +195,15 @@ int main(int argc, char const *argv[]) {
     return 1;
   }
 
-  // Load providers
-  response_helper phh(cliopts::fclname);
+  // Load providers — silence GENIE banner + per-provider chatter.
+  nusyst::quiet::SetGlobalQuiet();
+  response_helper phh;
+  {
+    nusyst::quiet::StdoutSink _quiet;
+    genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
+        "Messenger_whisper.xml");
+    phh = response_helper(cliopts::fclname);
+  }
 
   // Collect dial info
   std::vector<DialInfo> dials;
@@ -219,6 +232,11 @@ int main(int argc, char const *argv[]) {
     di.central = hdr.centralParamValue;
     di.is_correction = hdr.isCorrection;
     di.is_natural = hdr.unitsAreNatural;
+    di.is_splineable = hdr.isSplineable;
+    di.is_weight_syst = hdr.isWeightSystematicVariation;
+    di.oneSigmaShifts = hdr.oneSigmaShifts;
+    di.validityRange = hdr.paramValidityRange;
+    di.paramVariations = hdr.paramVariations;
 
     if (hdr.isCorrection || hdr.paramVariations.empty()) {
       std::cout << "[INFO]: Skipping " << di.fullname
@@ -258,10 +276,8 @@ int main(int argc, char const *argv[]) {
   genie::NtpMCEventRecord *GenieNtpl = nullptr;
   gevs->SetBranchAddress(cliopts::genie_branch_name.c_str(), &GenieNtpl);
 
-  genie::Messenger::Instance()->SetPrioritiesFromXmlFile("Messenger_whisper.xml");
-
   // Pass 1: scan events to pick N per channel
-  Long64_t nentries = std::min((Long64_t)cliopts::NMax, gevs->GetEntries());
+  Long64_t nentries = gevs->GetEntries(); if (cliopts::NMax < (size_t)nentries) nentries = (Long64_t)cliopts::NMax;
   std::map<std::string, std::vector<Long64_t>> channel_events;
 
   std::cout << "Scanning " << nentries << " events to select samples..." << std::endl;
@@ -352,6 +368,30 @@ int main(int argc, char const *argv[]) {
     std::cout << "ROOT file written to " << rootname << std::endl;
   }
 
+  // ---- Determine which (dial, channel) pairs are "active" --------------
+  // Active = at least one event has at least one weight differing from 1
+  // by more than the threshold. Inactive (dial, channel) pairs are skipped
+  // in the PDF.
+  const double activity_threshold = 1e-4;
+  // active_channels[dial_fullname] = ordered list of channels that show variation
+  std::map<std::string, std::vector<std::string>> active_channels;
+  for (auto &di : dials) {
+    auto dit = responses.find(di.fullname);
+    if (dit == responses.end()) continue;
+    for (auto &[chkey, ev_list] : dit->second) {
+      bool active = false;
+      for (auto &[idx, w] : ev_list) {
+        for (double v : w) {
+          if (std::isfinite(v) && std::abs(v - 1.0) > activity_threshold) {
+            active = true; break;
+          }
+        }
+        if (active) break;
+      }
+      if (active) active_channels[di.fullname].push_back(chkey);
+    }
+  }
+
   // Write PDF
   if (cliopts::make_pdf) {
     gStyle->SetOptStat(0);
@@ -361,53 +401,183 @@ int main(int argc, char const *argv[]) {
     TCanvas *c = new TCanvas("c", "", 1200, 900);
     c->Print((pdfname + "[").c_str());
 
-    // Summary page: list sampled events per channel
+    auto print_with_bookmark = [&](const std::string &bookmark) {
+      // ROOT TPDF uses "Title:..." in the Print options string to set a
+      // PDF bookmark for the current page; PDF viewers expose this as a
+      // clickable sidebar / outline pane for navigation.
+      c->Print(pdfname.c_str(), Form("Title:%s", bookmark.c_str()));
+    };
+
+    // ---- Page 1: Summary --------------------------------------------------
     c->Clear();
-    TPad *sumpad = new TPad("sumpad", "", 0, 0, 1, 1);
-    sumpad->SetFillColor(kWhite);
-    sumpad->Draw(); sumpad->cd();
-    TLatex tex;
-    tex.SetNDC();
-    tex.SetTextFont(42);
-    tex.SetTextSize(0.05);
-    tex.SetTextFont(62);
-    tex.DrawLatex(0.05, 0.93, "DumpDialResponseNuSyst Summary");
-    tex.SetTextFont(42);
-    tex.SetTextSize(0.028);
-    double y = 0.86;
-    tex.DrawLatex(0.05, y, Form("Config: %s", cliopts::fclname.c_str())); y -= 0.03;
-    tex.DrawLatex(0.05, y, Form("Input:  %s", cliopts::input_file.c_str())); y -= 0.03;
-    tex.DrawLatex(0.05, y, Form("Dials:  %zu   Channels: %zu   Events/channel: %d",
-                                 dials.size(), channel_events.size(), cliopts::n_per_channel));
-    y -= 0.04;
-    tex.SetTextFont(62);
-    tex.DrawLatex(0.05, y, "Sampled events per channel:"); y -= 0.03;
-    tex.SetTextFont(42);
-    for (auto &[chkey, evs] : channel_events) {
-      std::ostringstream ss;
-      ss << chkey << ":  ";
-      for (size_t i = 0; i < evs.size(); ++i) {
-        if (i > 0) ss << ", ";
-        ss << evs[i];
+    {
+      TPad *sumpad = new TPad("sumpad", "", 0, 0, 1, 1);
+      sumpad->SetFillColor(kWhite);
+      sumpad->Draw(); sumpad->cd();
+      TLatex tex;
+      tex.SetNDC(); tex.SetTextFont(42);
+      tex.SetTextSize(0.05); tex.SetTextFont(62);
+      tex.DrawLatex(0.05, 0.93, "DumpDialResponseNuSyst Summary");
+      tex.SetTextFont(42); tex.SetTextSize(0.028);
+      double y = 0.86;
+      tex.DrawLatex(0.05, y, Form("Config: %s", cliopts::fclname.c_str())); y -= 0.03;
+      tex.DrawLatex(0.05, y, Form("Input:  %s", cliopts::input_file.c_str())); y -= 0.03;
+      tex.DrawLatex(0.05, y, Form("Dials:  %zu   Active dials: %zu   Channels: %zu   Events/channel: %d",
+                                   dials.size(), active_channels.size(),
+                                   channel_events.size(), cliopts::n_per_channel));
+      y -= 0.04;
+      tex.SetTextFont(62);
+      tex.DrawLatex(0.05, y, "Sampled events per channel:"); y -= 0.03;
+      tex.SetTextFont(42);
+      for (auto &[chkey, evs] : channel_events) {
+        std::ostringstream ss;
+        ss << chkey << ":  ";
+        for (size_t i = 0; i < evs.size(); ++i) {
+          if (i > 0) ss << ", ";
+          ss << evs[i];
+        }
+        tex.DrawLatex(0.07, y, ss.str().c_str());
+        y -= 0.025;
+        if (y < 0.05) break;
       }
-      tex.DrawLatex(0.07, y, ss.str().c_str());
-      y -= 0.025;
-      if (y < 0.05) break;
     }
-    c->Print(pdfname.c_str());
+    print_with_bookmark("Summary");
 
-    // One page per (dial, channel)
+    // ---- Page 2+: Table of contents --------------------------------------
+    // Track the page number each dial starts on. Page 1 = Summary; TOC
+    // pages start at 2 and have unknown length, so first dial starts at
+    // 2 + ceil(active_dials / lines_per_toc_page) + 1.
+    const size_t lines_per_toc_page = 35;
+    size_t n_active = active_channels.size();
+    size_t n_toc_pages = (n_active + lines_per_toc_page - 1) / lines_per_toc_page;
+    if (n_toc_pages == 0) n_toc_pages = 1;
+    // First dial summary page starts after summary + TOC pages.
+    size_t first_dial_page = 1 + n_toc_pages + 1; // 1 (summary) + n_toc + 1
+    // But the index above counts the *next* page after the TOC, which is the
+    // first dial-summary page. PDF page numbers are 1-based externally.
+
+    // Compute dial → starting page map
+    std::map<std::string, size_t> dial_page;
+    {
+      size_t cur = first_dial_page;
+      for (auto &di : dials) {
+        auto it = active_channels.find(di.fullname);
+        if (it == active_channels.end()) continue;
+        dial_page[di.fullname] = cur;
+        cur += 1 /* metadata page */ + it->second.size();
+      }
+    }
+
+    // Render TOC across n_toc_pages pages
+    {
+      std::vector<std::pair<std::string, size_t>> entries; // (dial fullname, page)
+      for (auto &di : dials) {
+        auto pit = dial_page.find(di.fullname);
+        if (pit == dial_page.end()) continue;
+        entries.emplace_back(di.fullname, pit->second);
+      }
+      size_t n_pages = (entries.size() + lines_per_toc_page - 1) / lines_per_toc_page;
+      if (n_pages == 0) n_pages = 1;
+      for (size_t pg = 0; pg < n_pages; ++pg) {
+        c->Clear();
+        TPad *tp = new TPad(Form("tocpad_%zu", pg), "", 0, 0, 1, 1);
+        tp->SetFillColor(kWhite);
+        tp->Draw(); tp->cd();
+        TLatex tex;
+        tex.SetNDC(); tex.SetTextFont(62); tex.SetTextSize(0.045);
+        tex.DrawLatex(0.05, 0.93,
+                       Form("Table of contents (%zu/%zu) — %zu active dials",
+                             pg + 1, n_pages, entries.size()));
+        tex.SetTextFont(42); tex.SetTextSize(0.022);
+        tex.DrawLatex(0.05, 0.89,
+                       "Use your PDF viewer's outline / bookmark sidebar "
+                       "for clickable navigation.");
+        double y = 0.85;
+        size_t i_start = pg * lines_per_toc_page;
+        size_t i_end = std::min(i_start + lines_per_toc_page, entries.size());
+        for (size_t i = i_start; i < i_end; ++i) {
+          tex.DrawLatex(0.06, y,
+                         Form("%-50s . . . . . . . . p. %zu",
+                               entries[i].first.c_str(), entries[i].second));
+          y -= 0.022;
+        }
+        std::string bm = (n_pages == 1) ? "Table of contents"
+                                        : Form("Table of contents (%zu/%zu)", pg + 1, n_pages);
+        print_with_bookmark(bm);
+      }
+    }
+
+    // ---- For each active dial: metadata page + per-channel response pages
     for (auto &di : dials) {
-      auto dit = responses.find(di.fullname);
-      if (dit == responses.end()) continue;
+      auto it = active_channels.find(di.fullname);
+      if (it == active_channels.end()) continue;
+      auto &chans = it->second;
 
-      for (auto &[chkey, ev_list] : dit->second) {
+      // Metadata page
+      c->Clear();
+      {
+        TPad *p = new TPad("metap", "", 0, 0, 1, 1);
+        p->SetFillColor(kWhite);
+        p->Draw(); p->cd();
+        TLatex tex;
+        tex.SetNDC();
+        tex.SetTextFont(62); tex.SetTextSize(0.05);
+        tex.DrawLatex(0.05, 0.93, di.fullname.c_str());
+        tex.SetTextFont(42); tex.SetTextSize(0.030);
+        double y = 0.86;
+        auto fmt_dbl = [](double v) -> std::string {
+          if (v == kDefaultDouble) return "(unset)";
+          std::ostringstream ss; ss << v; return ss.str();
+        };
+        auto fmt_vec = [](const std::vector<double> &v) -> std::string {
+          if (v.empty()) return "(empty)";
+          std::ostringstream ss;
+          for (size_t i = 0; i < v.size(); ++i) {
+            if (i > 0) ss << ", ";
+            ss << v[i];
+          }
+          return ss.str();
+        };
+        auto line = [&](const std::string &k, const std::string &v) {
+          tex.SetTextFont(62); tex.DrawLatex(0.06, y, Form("%s:", k.c_str()));
+          tex.SetTextFont(42); tex.DrawLatex(0.32, y, v.c_str());
+          y -= 0.038;
+        };
+        line("Provider", di.provider_name);
+        line("paramId", std::to_string(di.pid));
+        line("centralParamValue", fmt_dbl(di.central));
+        line("paramVariations (fhicl)", fmt_vec(di.paramVariations));
+        line("Eval grid", fmt_vec(di.grid));
+        line("oneSigma down / up",
+              fmt_dbl(di.oneSigmaShifts[0]) + " / " + fmt_dbl(di.oneSigmaShifts[1]));
+        line("validity range",
+              fmt_dbl(di.validityRange[0]) + " ... " + fmt_dbl(di.validityRange[1]));
+        line("isSplineable", di.is_splineable ? "yes" : "no");
+        line("isCorrection", di.is_correction ? "yes" : "no");
+        line("unitsAreNatural", di.is_natural ? "yes (natural)" : "no (sigma)");
+        line("isWeightSystematic", di.is_weight_syst ? "yes" : "no (property shift)");
+        // Active channels
+        tex.SetTextFont(62); tex.DrawLatex(0.06, y, "Acts on channels:");
+        y -= 0.034; tex.SetTextFont(42);
+        for (auto &ch : chans) {
+          tex.DrawLatex(0.10, y, ch.c_str());
+          y -= 0.026;
+          if (y < 0.05) break;
+        }
+      }
+      print_with_bookmark(di.fullname);
+
+      // Response curve page per active channel
+      auto dit = responses.find(di.fullname);
+      for (auto &chkey : chans) {
+        auto evlit = dit->second.find(chkey);
+        if (evlit == dit->second.end()) continue;
+        auto &ev_list = evlit->second;
         if (ev_list.empty()) continue;
 
         c->Clear();
         c->cd();
 
-        // Title pad
         TPad *tp = new TPad("tp", "", 0, 0.93, 1, 1.0);
         tp->SetFillColor(kWhite);
         tp->Draw(); tp->cd();
@@ -416,17 +586,13 @@ int main(int argc, char const *argv[]) {
         std::string ptitle = di.fullname + "  |  " + chkey;
         title.DrawLatex(0.5, 0.5, ptitle.c_str());
 
-        // Main pad
         c->cd();
         TPad *mp = new TPad("mp", "", 0.08, 0.04, 0.98, 0.92);
         mp->SetFillColor(kWhite);
-        mp->SetLeftMargin(0.13);
-        mp->SetBottomMargin(0.13);
-        mp->SetTopMargin(0.05);
-        mp->SetRightMargin(0.05);
+        mp->SetLeftMargin(0.13); mp->SetBottomMargin(0.13);
+        mp->SetTopMargin(0.05); mp->SetRightMargin(0.05);
         mp->Draw(); mp->cd();
 
-        // Find weight range
         double wmin = 1, wmax = 1;
         for (auto &[idx, w] : ev_list) {
           for (double v : w) {
@@ -441,7 +607,6 @@ int main(int argc, char const *argv[]) {
         double gmin = *std::min_element(di.grid.begin(), di.grid.end());
         double gmax = *std::max_element(di.grid.begin(), di.grid.end());
 
-        // Frame histogram
         TH1D *frame = new TH1D(Form("frame_%s_%s", di.fullname.c_str(), chkey.c_str()),
                                  "", 100, gmin, gmax);
         frame->SetMinimum(wmin - pad);
@@ -456,19 +621,16 @@ int main(int argc, char const *argv[]) {
         frame->GetYaxis()->SetLabelSize(0.04);
         frame->Draw("AXIS");
 
-        // Unity line (weight=1)
         TLine *unity = new TLine(gmin, 1, gmax, 1);
         unity->SetLineStyle(2); unity->SetLineColor(kGray + 1);
         unity->Draw();
 
-        // CV vertical line
         if (di.central != kDefaultDouble && di.central >= gmin && di.central <= gmax) {
           TLine *cvline = new TLine(di.central, wmin - pad, di.central, wmax + pad);
           cvline->SetLineStyle(3); cvline->SetLineColor(kGray + 2);
           cvline->Draw();
         }
 
-        // One TGraph per event
         TLegend *leg = new TLegend(0.65, 0.65, 0.94, 0.93);
         leg->SetBorderSize(0); leg->SetFillStyle(0);
         leg->SetTextSize(0.032);
@@ -481,22 +643,19 @@ int main(int argc, char const *argv[]) {
             g->SetPoint(k, di.grid[k], w[k]);
           int col, sty;
           GetVarColor((int)i, col, sty);
-          g->SetLineColor(col);
-          g->SetLineWidth(2);
-          g->SetLineStyle(sty);
-          g->SetMarkerColor(col);
-          g->SetMarkerStyle(20 + (int)(i % 8));
-          g->SetMarkerSize(0.9);
+          g->SetLineColor(col); g->SetLineWidth(2); g->SetLineStyle(sty);
+          g->SetMarkerColor(col); g->SetMarkerStyle(20 + (int)(i % 8)); g->SetMarkerSize(0.9);
           g->Draw("LP SAME");
           leg->AddEntry(g, Form("%lld", ev_idx), "lp");
         }
         leg->Draw();
 
-        c->Print(pdfname.c_str());
+        print_with_bookmark(di.fullname + " | " + chkey);
       }
     }
     c->Print((pdfname + "]").c_str());
     std::cout << "PDF written to " << pdfname << std::endl;
+    std::cout << "Active dials: " << active_channels.size() << " of " << dials.size() << std::endl;
     delete c;
   }
 

@@ -9,12 +9,17 @@
 #include "systematicstools/utility/string_parsers.hh"
 
 #include "nusystematics/utility/GENIEUtils.hh"
+#include "nusystematics/utility/channel_classification.hh"
 #include "nusystematics/utility/enumclass2int.hh"
+#include "nusystematics/utility/genie_metadata.hh"
 #include "nusystematics/utility/KinVarUtils.hh"
 
 #include "nusystematics/utility/response_helper.hh"
+#include "nusystematics/utility/silence_genie.hh"
 
 #include "fhiclcpp/ParameterSet.h"
+
+#include <map>
 
 #include "Framework/EventGen/EventRecord.h"
 #include "Framework/GHEP/GHepParticle.h"
@@ -29,19 +34,39 @@
 #include "TFile.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
-#include <cmath>
 using namespace systtools;
 using namespace nusyst;
 using namespace genie;
 using namespace genie::rew;
 
 NEW_SYSTTOOLS_EXCEPT(unexpected_number_of_responses);
+
+namespace cliopts {
+std::string fclname = "";
+std::string genie_input = "";
+std::string genie_branch_name = "gmcrec";
+std::string outputfile = "";
+std::string envvar = "FHICL_FILE_PATH";
+std::string fhicl_key = "generated_systematic_provider_configuration";
+size_t NMax = std::numeric_limits<size_t>::max();
+size_t NSkip = 0;
+int n_threads = 1;     // -j / --threads N: spawn N worker processes via fork()
+int worker_id = -1;    // -1 == orchestrator / serial; >=0 == fork child index
+#ifndef NO_ART
+int lookup_policy = 1;
+#endif
+} // namespace cliopts
 
 struct TweakSummaryTree {
   TFile *f = NULL;
@@ -217,7 +242,11 @@ struct TweakSummaryTree {
                       meta_tweak_values.begin());
         }
 
-        m->Fill();
+        // In multi-process mode, only worker 0 writes the metadata tree so the
+        // hadd-merged output has a single un-duplicated copy.
+        if (cliopts::worker_id <= 0) {
+          m->Fill();
+        }
       }
 
     } // IF m set
@@ -278,20 +307,6 @@ struct TweakSummaryTree {
   void Fill() { t->Fill(); }
 };
 
-namespace cliopts {
-std::string fclname = "";
-std::string genie_input = "";
-std::string genie_branch_name = "gmcrec";
-std::string outputfile = "";
-std::string envvar = "FHICL_FILE_PATH";
-std::string fhicl_key = "generated_systematic_provider_configuration";
-size_t NMax = std::numeric_limits<size_t>::max();
-size_t NSkip = 0;
-#ifndef NO_ART
-int lookup_policy = 1;
-#endif
-} // namespace cliopts
-
 void SayUsage(char const *argv[]) {
   std::cout << "[USAGE]: " << argv[0] << "\n" << std::endl;
   std::cout << "\t-?|--help        : Show this message.\n"
@@ -306,6 +321,13 @@ void SayUsage(char const *argv[]) {
                "\t-N <NMax>        : Maximum number of events to process.\n"
                "\t-s <NSkip>       : Number of events to skip.\n"
                "\t-o <out.root>    : File to write validation canvases to.\n"
+               "\t-j|--threads N   : Spawn N worker subprocesses via fork()\n"
+               "\t                   to process disjoint event ranges in\n"
+               "\t                   parallel, then hadd the parts into the\n"
+               "\t                   final output. Default 1 = single process.\n"
+               "\t                   (Implemented as multi-process, not\n"
+               "\t                   std::thread, because GENIE's reweight\n"
+               "\t                   stack carries non-thread-safe globals.)\n"
             << std::endl;
 }
 
@@ -330,6 +352,9 @@ void HandleOpts(int argc, char const *argv[]) {
       cliopts::NSkip = str2T<size_t>(argv[++opt]);
     } else if (std::string(argv[opt]) == "-o") {
       cliopts::outputfile = argv[++opt];
+    } else if (std::string(argv[opt]) == "-j" ||
+               std::string(argv[opt]) == "--threads") {
+      cliopts::n_threads = str2T<int>(argv[++opt]);
     } else {
       std::cout << "[ERROR]: Unknown option: " << argv[opt] << std::endl;
       SayUsage(argv);
@@ -347,23 +372,98 @@ fhicl::ParameterSet ReadParameterSet(char const *[]) {
   return fhicl::ParameterSet::make(cliopts::fclname, *fm);
 }
 
-int main(int argc, char const *argv[]) {
-  HandleOpts(argc, argv);
+// Re-parse the parameter-headers fhicl to extract per-provider
+// `applies_to_channels` patterns (written by GenerateAllDialsConfigNuSyst's
+// per-bucket emission). Returns an empty map if no provider declares the key,
+// in which case no channel-aware skipping happens and behaviour matches the
+// pre-optimisation baseline.
+std::map<std::string, std::vector<std::string>>
+LoadAppliesToChannelsMap(const std::string &fclname,
+                         const std::string &top_key) {
+  std::map<std::string, std::vector<std::string>> out;
+  try {
+    std::unique_ptr<cet::filepath_maker> fm =
+        std::make_unique<cet::filepath_lookup_nonabsolute>("FHICL_FILE_PATH");
+    fhicl::ParameterSet raw = fhicl::ParameterSet::make(fclname, *fm);
+    fhicl::ParameterSet gen = raw.get<fhicl::ParameterSet>(top_key);
+    auto provider_names = gen.get<std::vector<std::string>>("syst_providers");
+    for (auto const &name : provider_names) {
+      fhicl::ParameterSet prov =
+          gen.get<fhicl::ParameterSet>(name, fhicl::ParameterSet{});
+      fhicl::ParameterSet topts =
+          prov.get<fhicl::ParameterSet>("tool_options", fhicl::ParameterSet{});
+      auto patterns =
+          topts.get<std::vector<std::string>>("applies_to_channels", {});
+      if (!patterns.empty()) out[name] = patterns;
+    }
+  } catch (std::exception &e) {
+    std::cerr << "[WARN]: Failed to load applies_to_channels map from "
+              << fclname << ": " << e.what()
+              << ". Falling back to evaluating every provider on every event."
+              << std::endl;
+    return {};
+  }
+  return out;
+}
 
+// Build a "trivial" response for a provider — one VarAndCVResponse per
+// non-responseless dial, with CV=1 and every variation weight =1. Used as a
+// drop-in for `GetEventVariationAndCVResponse` when the provider is skipped
+// for the current event's channel.
+event_unit_response_w_cv_t
+TrivialResponseFor(IGENIESystProvider_tool const &provider) {
+  event_unit_response_w_cv_t out;
+  for (auto const &hdr : provider.GetSystMetaData()) {
+    if (hdr.isResponselessParam) continue;
+    VarAndCVResponse r;
+    r.pid = hdr.systParamId;
+    r.CV_response = 1.0;
+    size_t nvar = hdr.isCorrection ? 1 : hdr.paramVariations.size();
+    r.responses.assign(nvar, 1.0);
+    out.push_back(std::move(r));
+  }
+  return out;
+}
+
+// Forward declarations for the multi-process dispatcher (see end of file).
+int RunSerial();
+int DispatchWorkers();
+
+int RunSerial() {
   bool RunNuSyst = true;
   if (!cliopts::fclname.size()) {
     RunNuSyst = false;
     std::cout << "-c is not given, running without evaluating reweights" << std::endl;
   }
   if (!cliopts::genie_input.size()) {
-    std::cout << "[ERROR]: Expected to be passed a -i option." << std::endl;
-    SayUsage(argv);
+    std::cout << "[ERROR]: Expected to be passed a -i option. "
+              << "(Run with -? for usage.)" << std::endl;
     return 1;
   }
 
+  nusyst::quiet::SetGlobalQuiet();
   response_helper phh;
+  std::map<std::string, std::vector<std::string>> applies_to_channels;
+  size_t n_filtered_providers = 0;
   if(RunNuSyst){
-    phh = response_helper(cliopts::fclname);
+    {
+      nusyst::quiet::StdoutSink _quiet;
+      genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
+          "Messenger_whisper.xml");
+      phh = response_helper(cliopts::fclname);
+    }
+    applies_to_channels = LoadAppliesToChannelsMap(cliopts::fclname,
+                                                    cliopts::fhicl_key);
+    for (auto &sp : phh.GetSystProvider()) {
+      if (applies_to_channels.count(sp->GetFullyQualifiedName())) {
+        ++n_filtered_providers;
+      }
+    }
+    std::cout << "[INFO]: " << n_filtered_providers << " of "
+              << phh.GetSystProvider().size()
+              << " providers declare applies_to_channels; "
+              << (phh.GetSystProvider().size() - n_filtered_providers)
+              << " will be evaluated on every event." << std::endl;
   }
 
   TChain *gevs = new TChain("gtree");
@@ -372,6 +472,14 @@ int main(int argc, char const *argv[]) {
               << std::quoted("gtree") << ", from TChain::Add descriptor: "
               << std::quoted(cliopts::genie_input) << "." << std::endl;
     return 3;
+  }
+
+  // Surface the GENIE version/tune that generated this sample so the user can
+  // diagnose version-skew issues (e.g. samples from GENIE 3.04 carry
+  // QE-event phase-space labels that GENIE 3.06's reweight can't transform).
+  // Only the orchestrator (worker_id < 0) reports — workers stay quiet.
+  if (cliopts::worker_id < 0) {
+    nusyst::metadata::ReportSampleInfo(cliopts::genie_input);
   }
 
   size_t NEvs = gevs->GetEntries();
@@ -396,9 +504,6 @@ int main(int argc, char const *argv[]) {
 
   TweakSummaryTree tst(cliopts::outputfile.c_str(), RunNuSyst);
   tst.AddBranches(phh);
-
-  genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
-      "Messenger_whisper.xml");
 
   size_t NToRead = std::min(NEvs, cliopts::NMax);
   size_t NToShout = NToRead / 20;
@@ -599,7 +704,9 @@ int main(int argc, char const *argv[]) {
                                    nMesons_1muNp0pi==0 &&
                                    nBaryonsAndPi0_1muNp0pi==0;
 
-    if (!(ev_it % NToShout)) {
+    // In multi-process mode only worker 0 prints progress (others would
+    // interleave illegibly); single-process behaves as before.
+    if (cliopts::worker_id <= 0 && !(ev_it % NToShout)) {
       std::cout << (ev_it ? "\r" : "") << "Event #" << ev_it << "/" << NToRead
                 << ", Interaction: " << GenieGHep.Summary()->AsString()
                 << std::flush;
@@ -607,9 +714,26 @@ int main(int argc, char const *argv[]) {
 
     
 
-    // Calcuate weights
+    // Calcuate weights — per-provider loop so we can skip providers whose
+    // `applies_to_channels` patterns don't match this event's topology.
+    // Skipped providers contribute a trivial response (CV=1, all variations=1)
+    // for each of their dials, preserving the event's flat-tree shape.
     if(RunNuSyst){
-      event_unit_response_w_cv_t resp = phh.GetEventVariationAndCVResponse(GenieGHep);
+      event_unit_response_w_cv_t resp;
+      std::string ch = (n_filtered_providers > 0)
+                           ? nusyst::channel::MakeChannelKey(GenieGHep)
+                           : std::string{};
+      auto &providers = phh.GetSystProvider();
+      for (auto &sp : providers) {
+        auto it = applies_to_channels.find(sp->GetFullyQualifiedName());
+        bool applies = (it == applies_to_channels.end())
+                           ? true
+                           : nusyst::channel::MatchesAny(ch, it->second);
+        event_unit_response_w_cv_t prov_resp =
+            applies ? sp->GetEventVariationAndCVResponse(GenieGHep)
+                    : TrivialResponseFor(*sp);
+        for (auto &er : prov_resp) resp.push_back(std::move(er));
+      }
       tst.Add(resp);
     }
 
@@ -620,4 +744,120 @@ int main(int argc, char const *argv[]) {
 
   }
   std::cout << std::endl;
+  return 0;
+}
+
+// Spawn cliopts::n_threads worker subprocesses via fork(), each handling a
+// disjoint slice of the input event range. Workers write to <out>.partXX
+// files; the orchestrator hadd's them into <out> on success and deletes the
+// parts. Returns 0 on success, non-zero if any worker failed or hadd failed.
+//
+// fork() (rather than std::thread / OpenMP) is mandatory: GENIE's reweight
+// machinery keeps non-thread-safe global state (genie::Messenger, the tune
+// singletons, RandomGen, GReWeight engine caches). Each worker gets its own
+// address space and initialises GENIE independently.
+int DispatchWorkers() {
+  if (cliopts::outputfile.empty()) {
+    std::cerr << "[ERROR]: --threads N>1 requires -o <out.root>." << std::endl;
+    return 1;
+  }
+
+  // Peek at the input to compute event count without touching GENIE. The
+  // TChain is destroyed (closing any opened files) before fork().
+  size_t NEvs = 0;
+  {
+    TChain peek("gtree");
+    if (!peek.Add(cliopts::genie_input.c_str())) {
+      std::cerr << "[ERROR]: Could not open " << cliopts::genie_input << std::endl;
+      return 1;
+    }
+    NEvs = peek.GetEntries();
+  }
+  if (!NEvs) {
+    std::cerr << "[ERROR]: Input chain is empty." << std::endl;
+    return 1;
+  }
+
+  size_t user_start = cliopts::NSkip;
+  size_t user_end = std::min(cliopts::NMax, NEvs);
+  if (user_end <= user_start) {
+    std::cerr << "[ERROR]: -s/-N leaves zero events to process." << std::endl;
+    return 1;
+  }
+  size_t total = user_end - user_start;
+  int N = std::min<int>(cliopts::n_threads, static_cast<int>(total));
+  size_t per = (total + N - 1) / N;
+
+  std::vector<pid_t> pids;
+  std::vector<std::string> partfiles;
+  std::string base = cliopts::outputfile;
+
+  std::cout << "[INFO]: Dispatching " << N << " workers across "
+            << total << " events (~" << per << " per worker)." << std::endl;
+
+  for (int k = 0; k < N; ++k) {
+    size_t start = user_start + static_cast<size_t>(k) * per;
+    size_t end = std::min(start + per, user_end);
+    if (start >= end) break;
+    std::string part = base + ".part" + std::to_string(k);
+
+    pid_t pid = fork();
+    if (pid == 0) {
+      // Child: configure as worker k and run the serial path.
+      cliopts::worker_id = k;
+      cliopts::n_threads = 1;
+      cliopts::NSkip = start;
+      cliopts::NMax = end;
+      cliopts::outputfile = part;
+      int rc = RunSerial();
+      // _exit so we don't run global destructors twice.
+      _exit(rc == 0 ? 0 : 1);
+    } else if (pid < 0) {
+      std::perror("fork");
+      return 1;
+    }
+    pids.push_back(pid);
+    partfiles.push_back(part);
+    std::cout << "  worker " << k << " (pid " << pid << "): events ["
+              << start << ", " << end << ") -> " << part << std::endl;
+  }
+
+  int orchestrator_rc = 0;
+  for (size_t i = 0; i < pids.size(); ++i) {
+    int status = 0;
+    waitpid(pids[i], &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "[ERROR]: worker " << i << " (pid " << pids[i]
+                << ") exited abnormally (status " << status << ")." << std::endl;
+      orchestrator_rc = 2;
+    }
+  }
+  if (orchestrator_rc != 0) {
+    std::cerr << "[ERROR]: At least one worker failed; not running hadd. "
+              << "Part files left in place for inspection:" << std::endl;
+    for (auto &p : partfiles) std::cerr << "    " << p << std::endl;
+    return orchestrator_rc;
+  }
+
+  std::string cmd = "hadd -f " + base;
+  for (auto &p : partfiles) cmd += " " + p;
+  std::cout << "[INFO]: Merging part files: " << cmd << std::endl;
+  int hadd_rc = std::system(cmd.c_str());
+  if (hadd_rc != 0) {
+    std::cerr << "[ERROR]: hadd failed (exit code " << hadd_rc
+              << "); leaving part files in place." << std::endl;
+    return 3;
+  }
+
+  for (auto &p : partfiles) std::remove(p.c_str());
+  std::cout << "[INFO]: Done. Output: " << base << std::endl;
+  return 0;
+}
+
+int main(int argc, char const *argv[]) {
+  HandleOpts(argc, argv);
+  if (cliopts::n_threads > 1 && cliopts::worker_id < 0) {
+    return DispatchWorkers();
+  }
+  return RunSerial();
 }

@@ -20,3 +20,8 @@ foreach(targ ${TARGETS_TO_BUILD})
 endforeach()
 
 install(TARGETS ${TARGETS_TO_BUILD} DESTINATION bin/)
+
+# Unified-CLI shell dispatcher: a single `nusyst` entrypoint that forwards
+# subcommands (config / inventory / tweaks / response / plots) to the binaries
+# above. Installed as a program so the executable bit is preserved.
+install(PROGRAMS nusyst DESTINATION bin/)

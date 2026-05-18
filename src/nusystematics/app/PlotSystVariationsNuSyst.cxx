@@ -13,9 +13,12 @@
 
 #include "nusystematics/utility/GENIEUtils.hh"
 #include "nusystematics/utility/KinVarUtils.hh"
+#include "nusystematics/utility/channel_classification.hh"
 #include "nusystematics/utility/response_helper.hh"
+#include "nusystematics/utility/silence_genie.hh"
 
 #include "fhiclcpp/ParameterSet.h"
+#include "cetlib/filepath_maker.h"
 
 #include "Framework/EventGen/EventRecord.h"
 #include "Framework/GHEP/GHepParticle.h"
@@ -227,6 +230,7 @@ struct ParamMeta {
 namespace cliopts {
 std::string input_file;
 std::string fclname;
+std::string fhicl_key = "generated_systematic_provider_configuration";
 std::string output_base = "syst_variations";
 std::string treename = "events";
 std::string genie_branch_name = "gmcrec";
@@ -243,7 +247,11 @@ void SayUsage(char const *argv[]) {
     "  Required:\n"
     "    -i <file.root>       Input ROOT file (ghep or flat tree)\n\n"
     "  Optional:\n"
-    "    -c <config.fcl>      FHiCL config (required for GHEP mode)\n"
+    "    -c <config.fcl>      FHiCL config (required for GHEP mode; if given\n"
+    "                         in flat-tree mode, applies_to_channels patterns\n"
+    "                         are read from it to skip dial x channel pages\n"
+    "                         where the dial does not apply)\n"
+    "    -k <fhicl_key>       Top-level fhicl key (default: generated_systematic_provider_configuration)\n"
     "    -o <output>          Output basename (default: syst_variations)\n"
     "    -v <var1,var2,...>    Variables to plot (default: all predefined)\n"
     "                         Predefined: Enu,q0,Q2,q3,W,plep,coslep,EAvail,Tp\n"
@@ -264,6 +272,7 @@ void HandleOpts(int argc, char const *argv[]) {
     if (s == "-?" || s == "--help") { SayUsage(argv); exit(0); }
     else if (s == "-i") cliopts::input_file = argv[++opt];
     else if (s == "-c") cliopts::fclname = argv[++opt];
+    else if (s == "-k") cliopts::fhicl_key = argv[++opt];
     else if (s == "-o") cliopts::output_base = argv[++opt];
     else if (s == "-t") cliopts::treename = argv[++opt];
     else if (s == "-b") cliopts::genie_branch_name = argv[++opt];
@@ -383,11 +392,88 @@ double GetVarValue(const EventVars &ev, const std::string &branch) {
 // allhists[channel][param][var] -> SystHists
 using HistMap = std::map<std::string, std::map<std::string, std::map<std::string, SystHists>>>;
 
+// ===== applies_to_channels loader (mirrors DumpConfiguredTweaksNuSyst) ======
+// Re-parse the parameter-headers fhicl to extract per-provider
+// `applies_to_channels` patterns. Returns an empty map if no provider declares
+// the key, in which case no channel-aware skipping happens and behaviour
+// matches the pre-filter baseline.
+std::map<std::string, std::vector<std::string>>
+LoadAppliesToChannelsMap(const std::string &fclname,
+                        const std::string &top_key) {
+  std::map<std::string, std::vector<std::string>> out;
+  auto try_parse = [&](cet::filepath_maker &fm) -> fhicl::ParameterSet {
+    return fhicl::ParameterSet::make(fclname, fm);
+  };
+  fhicl::ParameterSet raw;
+  bool parsed = false;
+  // 1) Treat the path as-is (handles absolute paths and paths relative to cwd).
+  try {
+    cet::filepath_maker fm;
+    raw = try_parse(fm);
+    parsed = true;
+  } catch (std::exception const &) {}
+  // 2) Fall back to FHICL_FILE_PATH lookup (handles bare basenames).
+  if (!parsed) {
+    try {
+      cet::filepath_lookup_nonabsolute fm("FHICL_FILE_PATH");
+      raw = try_parse(fm);
+      parsed = true;
+    } catch (std::exception const &e) {
+      std::cerr << "[WARN]: Failed to load applies_to_channels map from "
+                << fclname << ": " << e.what()
+                << ". Falling back to no channel filtering." << std::endl;
+      return {};
+    }
+  }
+  try {
+    fhicl::ParameterSet gen = raw.get<fhicl::ParameterSet>(top_key);
+    auto provider_names = gen.get<std::vector<std::string>>("syst_providers");
+    for (auto const &name : provider_names) {
+      fhicl::ParameterSet prov =
+          gen.get<fhicl::ParameterSet>(name, fhicl::ParameterSet{});
+      fhicl::ParameterSet topts =
+          prov.get<fhicl::ParameterSet>("tool_options", fhicl::ParameterSet{});
+      auto patterns =
+          topts.get<std::vector<std::string>>("applies_to_channels", {});
+      if (!patterns.empty()) out[name] = patterns;
+    }
+  } catch (std::exception const &e) {
+    std::cerr << "[WARN]: applies_to_channels lookup in " << fclname
+              << " failed: " << e.what()
+              << ". Falling back to no channel filtering." << std::endl;
+    return {};
+  }
+  return out;
+}
+
+// Resolve which provider declared a parameter by longest-prefix match on the
+// param's full name (e.g. "GENIEReWeight_CCQE_MaCCQE" -> "GENIEReWeight_CCQE").
+// Returns nullptr if no provider in the map is a prefix.
+const std::vector<std::string> *
+FindAppliesPatternsForFullname(
+    const std::map<std::string, std::vector<std::string>> &map,
+    const std::string &fullname) {
+  const std::vector<std::string> *best = nullptr;
+  size_t best_len = 0;
+  for (auto const &kv : map) {
+    auto const &provname = kv.first;
+    if (fullname.size() > provname.size() + 1 &&
+        fullname.compare(0, provname.size(), provname) == 0 &&
+        fullname[provname.size()] == '_' &&
+        provname.size() > best_len) {
+      best = &kv.second;
+      best_len = provname.size();
+    }
+  }
+  return best;
+}
+
 // ===== FLAT TREE MODE ======================================================
 void FillFromFlatTree(
     TTree *tree, TTree *meta,
     const std::vector<VarDef> &vars,
     const std::vector<ParamMeta> &params,
+    const std::map<std::string, std::vector<std::string>> &applies_to_channels,
     HistMap &allhists,
     EventCounts &counts) {
 
@@ -434,8 +520,10 @@ void FillFromFlatTree(
     int ntweaks;
     std::vector<double> responses;
     double cv_weight;
+    std::vector<std::string> applies_patterns; // empty -> applies to all channels
   };
   std::vector<PBranch> pbranches;
+  size_t n_filtered = 0;
   for (auto &pm : params) {
     PBranch pb;
     pb.fullname = pm.fullname;
@@ -446,10 +534,20 @@ void FillFromFlatTree(
       tree->SetBranchAddress(("tweak_responses_" + pm.fullname).c_str(), pb.responses.data());
     if (tree->GetBranch(("paramCVWeight_" + pm.fullname).c_str()))
       tree->SetBranchAddress(("paramCVWeight_" + pm.fullname).c_str(), &pb.cv_weight);
+    if (auto *pats = FindAppliesPatternsForFullname(applies_to_channels, pm.fullname)) {
+      pb.applies_patterns = *pats;
+      ++n_filtered;
+    }
     pbranches.push_back(std::move(pb));
   }
+  if (!applies_to_channels.empty()) {
+    std::cout << "[INFO]: " << n_filtered << " of " << pbranches.size()
+              << " parameters have applies_to_channels patterns; channel x dial "
+                 "combinations outside those patterns will be skipped."
+              << std::endl;
+  }
 
-  Long64_t nentries = std::min((Long64_t)cliopts::NMax, tree->GetEntries());
+  Long64_t nentries = tree->GetEntries(); if (cliopts::NMax < (size_t)nentries) nentries = (Long64_t)cliopts::NMax;
   Long64_t nshout = std::max(nentries / 20, (Long64_t)1);
 
   for (Long64_t ev = 0; ev < nentries; ++ev) {
@@ -488,6 +586,13 @@ void FillFromFlatTree(
       auto &pb = pbranches[ip];
       auto &pm = params[ip];
 
+      // Skip booking + filling for (param, channel) combinations the dial
+      // does not apply to. Empty patterns -> dial applies everywhere.
+      if (!pb.applies_patterns.empty() &&
+          !nusyst::channel::MatchesAny(chkey, pb.applies_patterns)) {
+        continue;
+      }
+
       // Book histograms on first encounter of this channel
       if (allhists[chkey].find(pm.fullname) == allhists[chkey].end()) {
         BookHistograms(chkey, pm, vars, allhists[chkey][pm.fullname], tree);
@@ -515,10 +620,18 @@ void FillFromFlatTree(
 void FillFromGHEP(
     const std::string &input, const std::string &fclname,
     const std::vector<VarDef> &vars,
+    const std::map<std::string, std::vector<std::string>> &applies_to_channels,
     HistMap &allhists,
     EventCounts &counts) {
 
-  response_helper phh(fclname);
+  nusyst::quiet::SetGlobalQuiet();
+  response_helper phh;
+  {
+    nusyst::quiet::StdoutSink _quiet;
+    genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
+        "Messenger_whisper.xml");
+    phh = response_helper(fclname);
+  }
 
   TChain *gevs = new TChain("gtree");
   if (!gevs->Add(input.c_str())) {
@@ -529,8 +642,13 @@ void FillFromGHEP(
   gevs->SetBranchAddress(cliopts::genie_branch_name.c_str(), &GenieNtpl);
 
   // Build param metadata
-  struct GPInfo { paramId_t pid; ParamMeta meta; };
+  struct GPInfo {
+    paramId_t pid;
+    ParamMeta meta;
+    std::vector<std::string> applies_patterns; // empty -> applies to all channels
+  };
   std::vector<GPInfo> gparams;
+  size_t n_filtered = 0;
   for (paramId_t pid : phh.GetParameters()) {
     SystParamHeader const &hdr = phh.GetHeader(pid);
     if (hdr.isResponselessParam) continue;
@@ -545,13 +663,22 @@ void FillFromGHEP(
     gi.meta.fullname = fullname;
     gi.meta.ntweaks = hdr.isCorrection ? 1 : (int)hdr.paramVariations.size();
     gi.meta.tweakvalues = hdr.paramVariations;
+    auto it = applies_to_channels.find(provname);
+    if (it != applies_to_channels.end()) {
+      gi.applies_patterns = it->second;
+      ++n_filtered;
+    }
     gparams.push_back(gi);
   }
   if (gparams.empty()) { std::cout << "[WARN]: No matching parameters." << std::endl; delete gevs; return; }
+  if (!applies_to_channels.empty()) {
+    std::cout << "[INFO]: " << n_filtered << " of " << gparams.size()
+              << " parameters have applies_to_channels patterns; channel x dial "
+                 "combinations outside those patterns will be skipped."
+              << std::endl;
+  }
 
-  genie::Messenger::Instance()->SetPrioritiesFromXmlFile("Messenger_whisper.xml");
-
-  Long64_t nentries = std::min((Long64_t)cliopts::NMax, gevs->GetEntries());
+  Long64_t nentries = gevs->GetEntries(); if (cliopts::NMax < (size_t)nentries) nentries = (Long64_t)cliopts::NMax;
   Long64_t nshout = std::max(nentries / 20, (Long64_t)1);
 
   for (Long64_t ev_it = 0; ev_it < nentries; ++ev_it) {
@@ -623,6 +750,12 @@ void FillFromGHEP(
     event_unit_response_w_cv_t resp = phh.GetEventVariationAndCVResponse(GenieGHep);
 
     for (auto &gp : gparams) {
+      // Skip booking + filling for (param, channel) combinations the dial
+      // does not apply to. Empty patterns -> dial applies everywhere.
+      if (!gp.applies_patterns.empty() &&
+          !nusyst::channel::MatchesAny(chkey, gp.applies_patterns)) {
+        continue;
+      }
       if (allhists[chkey].find(gp.meta.fullname) == allhists[chkey].end())
         BookHistograms(chkey, gp.meta, vars, allhists[chkey][gp.meta.fullname]);
 
@@ -673,6 +806,52 @@ void PruneEmpty(HistMap &allhists) {
     if (!has_entries) empty_channels.push_back(ch);
   }
   for (auto &ch : empty_channels) allhists.erase(ch);
+}
+
+// Drop (channel, param) pairs whose variation histograms are bin-for-bin
+// identical to the CV histogram across every variable. These arise when a
+// dial's applies_to_channels topology matches but its internal GENIE cuts
+// (struck-nucleon PDG, FS pion multiplicity, W cuts, FS-hadron presence for
+// FSI dials, etc.) leave every event in the channel with response = 1.
+void PruneTrivialParams(HistMap &allhists) {
+  size_t pruned = 0, total = 0;
+  for (auto &chan_kv : allhists) {
+    auto &param_map = chan_kv.second;
+    for (auto it = param_map.begin(); it != param_map.end(); ) {
+      ++total;
+      bool trivial = true;
+      for (auto const &var_kv : it->second) {
+        auto const &sh = var_kv.second;
+        int nb = sh.h_cv->GetNbinsX();
+        for (auto *hv : sh.h_var) {
+          for (int b = 1; b <= nb && trivial; ++b) {
+            double cv = sh.h_cv->GetBinContent(b);
+            double v  = hv->GetBinContent(b);
+            // Bit-exact compare is enough: when a dial doesn't fire, each
+            // event's CV-weighted and var-weighted fills are identical
+            // (response is exactly 1.0), so the bin sums match exactly.
+            if (cv != v) trivial = false;
+          }
+          if (!trivial) break;
+        }
+        if (!trivial) break;
+      }
+      if (trivial) {
+        for (auto &var_kv : it->second) {
+          auto &sh = var_kv.second;
+          delete sh.h_cv;
+          for (auto *h : sh.h_var) delete h;
+        }
+        it = param_map.erase(it);
+        ++pruned;
+      } else {
+        ++it;
+      }
+    }
+  }
+  std::cout << "[INFO]: Pruned " << pruned << " of " << total
+            << " (channel, dial) combinations with response == CV in every bin."
+            << std::endl;
 }
 
 // ===== Color palette =======================================================
@@ -912,16 +1091,25 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
           sh.h_var[i]->Draw("HIST SAME");
         }
 
-        // Compute chi2/NDF and max fractional shift across all variations.
-        // Display-only: histograms are NOT modified, no bins are filtered out.
-        // Bins with h_cv == 0 are skipped from the max calculation because
-        // the fractional shift is mathematically undefined there.
-        double max_chi2_ndf = 0;
+        // Find the variation with the largest chi^2 against CV; report chi^2
+        // and NDF as raw numbers (NOT the chi^2/NDF ratio) so the reader can
+        // form the ratio themselves. Also track the max fractional shift
+        // across all variations. Display-only: histograms are NOT modified,
+        // no bins are filtered out. Bins with h_cv == 0 are skipped from
+        // the max fractional shift because the ratio is undefined there.
+        double max_chi2 = 0;
+        int ndf_at_max = 0;
         double max_frac_shift = 0;
         int nbins_x = sh.h_cv->GetNbinsX();
         for (int i = 0; i < (int)sh.h_var.size(); ++i) {
-          double chi2 = sh.h_cv->Chi2Test(sh.h_var[i], "WW CHI2/NDF");
-          if (std::isfinite(chi2) && chi2 > max_chi2_ndf) max_chi2_ndf = chi2;
+          double chi2 = 0;
+          int ndf = 0;
+          int igood = 0;
+          sh.h_cv->Chi2TestX(sh.h_var[i], chi2, ndf, igood, "WW");
+          if (std::isfinite(chi2) && chi2 > max_chi2) {
+            max_chi2 = chi2;
+            ndf_at_max = ndf;
+          }
           for (int b = 1; b <= nbins_x; ++b) {
             double cv_val = sh.h_cv->GetBinContent(b);
             if (cv_val == 0) continue;
@@ -938,7 +1126,8 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
         stats.SetTextFont(42);
         stats.SetTextAlign(13); // top-left
         stats.DrawLatex(0.19, 0.92,
-                         Form("#chi^{2}_{max}/ndf = %.2f", max_chi2_ndf));
+                         Form("#chi^{2}_{max} / ndf = %.2f / %d",
+                              max_chi2, ndf_at_max));
         stats.DrawLatex(0.19, 0.85,
                          Form("max|#Delta|/CV = %.1f%%", max_frac_shift * 100));
 
@@ -1051,6 +1240,14 @@ int main(int argc, char const *argv[]) {
   HistMap allhists;
   EventCounts counts;
 
+  // Optional per-provider applies_to_channels patterns. Loaded only if a
+  // fhicl config is given; empty -> no filtering.
+  std::map<std::string, std::vector<std::string>> applies_to_channels;
+  if (!cliopts::fclname.empty()) {
+    applies_to_channels = LoadAppliesToChannelsMap(cliopts::fclname,
+                                                    cliopts::fhicl_key);
+  }
+
   if (flat_tree_mode) {
     std::cout << "Detected flat tree mode." << std::endl;
 
@@ -1092,7 +1289,8 @@ int main(int argc, char const *argv[]) {
     }
     vars = valid_vars;
 
-    FillFromFlatTree(flat_tree, meta_tree, vars, params, allhists, counts);
+    FillFromFlatTree(flat_tree, meta_tree, vars, params, applies_to_channels,
+                     allhists, counts);
   } else {
     std::cout << "Detected GHEP mode." << std::endl;
     fin->Close(); delete fin; fin = nullptr;
@@ -1100,7 +1298,8 @@ int main(int argc, char const *argv[]) {
       std::cout << "[ERROR]: GHEP mode requires -c <config.fcl>" << std::endl;
       return 3;
     }
-    FillFromGHEP(cliopts::input_file, cliopts::fclname, vars, allhists, counts);
+    FillFromGHEP(cliopts::input_file, cliopts::fclname, vars,
+                 applies_to_channels, allhists, counts);
   }
 
   PruneEmpty(allhists);
@@ -1161,6 +1360,13 @@ int main(int argc, char const *argv[]) {
   AddChannel("Total_NC", [](const std::string &ch) {
     return ch.find("NC_") == 0 && ch.find("Total") == std::string::npos;
   });
+
+  // Content-based prune: drop (channel, dial) pairs where every variation
+  // histogram matches CV bin-for-bin. Catches dials whose internal GENIE cuts
+  // (e.g. struck-nucleon PDG, FS pion multiplicity, FS-hadron presence for
+  // FSI dials) reject every event in the channel even though the channel
+  // topology nominally matched the dial's applies_to_channels patterns.
+  PruneTrivialParams(allhists);
 
   if (cliopts::make_root) WriteROOT(allhists);
 
