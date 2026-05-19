@@ -2,7 +2,7 @@
 // Builds a "kitchen sink" generated_systematic_provider_configuration fhicl
 // containing every available dial:
 //   - all GENIE Reweight dials enumerated from genie::rew::GSyst_t at runtime
-//     (no hardcoded dial names — discovered via GSyst::AsString)
+//     (no hardcoded dial names -- discovered via GSyst::AsString)
 //   - all standalone nusystematics provider tool configs found in --fcl-dir,
 //     each loaded and validated; ones that fail to instantiate are reported
 //     and skipped.
@@ -148,7 +148,7 @@ bool IsValidGENIEDialName(const std::string &name) {
 //      exclusive within a single GReWeight engine. We default to dipole;
 //      the Z-expansion family (ZNormCCQE / ZExpA1..4CCQE / AxFFCCQEshape)
 //      is dropped. Supporting both in parallel would need a second CCQE
-//      provider instance in Z-expansion mode — TODO.
+//      provider instance in Z-expansion mode -- TODO.
 //
 //   2. shape+norm Ma/Mv dials and their shape-only twins reweight the same
 //      physics from two different code paths. The Norm{CC,NC}RES and the
@@ -203,18 +203,18 @@ CCQEFFMode DetectCCQEFFMode() {
 // Returns an empty string if the dial should be kept, or a short human-readable
 // reason if it should be excluded from the default tool config.
 std::string DialInactiveReason(const std::string &name) {
-  // Z-expansion CCQE axial form-factor dials — accepted only by a CCQE engine
+  // Z-expansion CCQE axial form-factor dials -- accepted only by a CCQE engine
   // running in kModeZExp on events whose AxialFormFactorModel is ZExp.
   static const std::set<std::string> zexp_axial = {
     "ZNormCCQE", "ZExpA1CCQE", "ZExpA2CCQE", "ZExpA3CCQE", "ZExpA4CCQE",
     "AxFFCCQEshape"
   };
-  // Dipole CCQE axial form-factor dials — accepted only by a CCQE engine
+  // Dipole CCQE axial form-factor dials -- accepted only by a CCQE engine
   // running in kModeMa / kModeNormAndMaShape on dipole or MArun events.
   static const std::set<std::string> dipole_axial = {
     "MaCCQE", "E0CCQE"
   };
-  // Shape-only twins — redundant with the shape+norm dials and unsafe on
+  // Shape-only twins -- redundant with the shape+norm dials and unsafe on
   // non-matching event topologies.
   static const std::set<std::string> shape_only_twins = {
     "MaCCQEshape", "MaCCRESshape", "MvCCRESshape",
@@ -240,12 +240,12 @@ std::string DialInactiveReason(const std::string &name) {
   CCQEFFMode ff = DetectCCQEFFMode();
   if (zexp_axial.count(name)) {
     if (ff == CCQEFFMode::Dipole)
-      return "Z-expansion CCQE FF — loaded tune uses dipole axial FF";
+      return "Z-expansion CCQE FF -- loaded tune uses dipole axial FF";
     // ff is ZExp or Unknown: keep
   }
   if (dipole_axial.count(name)) {
     if (ff == CCQEFFMode::ZExp)
-      return "dipole CCQE FF — loaded tune uses Z-expansion axial FF";
+      return "dipole CCQE FF -- loaded tune uses Z-expansion axial FF";
     // ff is Dipole or Unknown: keep
   }
   if (shape_only_twins.count(name))
@@ -253,7 +253,7 @@ std::string DialInactiveReason(const std::string &name) {
   if (norm_requires_shape_only.count(name))
     return "requires IsShapeOnly which conflicts with kept shape+norm dials";
   if (em_only_dials.count(name))
-    return "EM-only dial — trivial on weak-current neutrino events";
+    return "EM-only dial -- trivial on weak-current neutrino events";
   return "";
 }
 
@@ -265,7 +265,7 @@ std::string DialInactiveReason(const std::string &name) {
 //
 //     <CC|NC>_<nuname>_<target>_<topology>   e.g. "CC_numu_Ar40_QE"
 //
-// This is a hand-curated table — the GENIE Reweight engines themselves don't
+// This is a hand-curated table -- the GENIE Reweight engines themselves don't
 // expose channel applicability via any introspection API, but each dial's
 // physics scope is well known.
 const std::map<std::string, std::string> &DialToBucketMap() {
@@ -319,7 +319,7 @@ const std::map<std::string, std::string> &DialToBucketMap() {
     {"NonRESBGvbarpNC1pi",   "SPP"}, {"NonRESBGvbarpNC2pi",   "SPP"},
     {"NonRESBGvbarnNC1pi",   "SPP"}, {"NonRESBGvbarnNC2pi",   "SPP"},
     {"MKSPP_ReWeight",       "SPP"},
-    // Final-state interactions — pions/nucleons rescatter in the nucleus on
+    // Final-state interactions -- pions/nucleons rescatter in the nucleus on
     // top of any underlying topology, so these stay un-filtered (apply to all).
     {"FormZone",     "FSI"},
     {"MFP_pi",       "FSI"}, {"MFP_N",        "FSI"},
@@ -333,7 +333,7 @@ const std::map<std::string, std::string> &DialToBucketMap() {
 }
 
 // Returns the channel bucket for a given GENIE Reweight dial. Unknown dials
-// fall into "Misc" — those will be evaluated on every event by default.
+// fall into "Misc" -- those will be evaluated on every event by default.
 std::string BucketForDial(const std::string &name) {
   auto const &m = DialToBucketMap();
   auto it = m.find(name);
@@ -523,7 +523,7 @@ bool IsMissingDataFileError(const std::string &err) {
 //
 // We classify it as [SKIP] (known upstream bug) rather than [FAIL] (genuine
 // config problem) so users can tell at a glance that the provider's tool
-// config is fine — the failure is in shared code waiting on a fix.
+// config is fine -- the failure is in shared code waiting on a fix.
 bool IsKnownUpstreamBug(const std::string &err) {
   return err.find("basic_string: construction from null") != std::string::npos;
 }
@@ -693,7 +693,7 @@ int main(int argc, char const *argv[]) {
   // a string. Two issues to handle:
   //   1. Newlines would break fhicl's single-line value form.
   //   2. fhicl's value parser treats `:`, `[`, `]`, `{`, `}`, `,` and quotes
-  //      as syntactic — even inside a string element of a vector<string>,
+  //      as syntactic -- even inside a string element of a vector<string>,
   //      `put<vector<string>>` re-validates each entry and fails on those
   //      characters. So we strip them down to spaces / backticks. The result
   //      is a readable footer at the cost of punctuation fidelity.
@@ -709,7 +709,7 @@ int main(int argc, char const *argv[]) {
           ascii += '`'; break;
         default:
           if (c < 32 || c > 126) {
-            // Non-ASCII (UTF-8 bytes, em-dashes, etc.) — fhicl's value parser
+            // Non-ASCII (UTF-8 bytes, em-dashes, etc.) -- fhicl's value parser
             // can choke on these. Replace with a plain hyphen for em-dashes
             // (E2 80 94) / en-dashes (E2 80 93) / others; the goal is "human
             // can still read it", not "round-trips bit-for-bit".
@@ -858,13 +858,13 @@ int main(int argc, char const *argv[]) {
         if (tools.empty()) {
           if (IsMissingDataFileError(err)) {
             std::cerr << "  [SKIP] " << base
-                      << " (missing external data file — stage data and re-run)\n"
+                      << " (missing external data file -- stage data and re-run)\n"
                       << "         " << err << std::endl;
             scan_report.skipped_data_names.push_back(base);
             scan_report.skipped_data_reasons.push_back(flatten_err(err));
           } else if (IsKnownUpstreamBug(err)) {
             std::cerr << "  [SKIP] " << base
-                      << " (known upstream bug — see project_basicstring_null_bug)\n"
+                      << " (known upstream bug -- see project_basicstring_null_bug)\n"
                       << "         " << err << std::endl;
             scan_report.skipped_bug_names.push_back(base);
             scan_report.skipped_bug_reasons.push_back(flatten_err(err));
@@ -889,8 +889,8 @@ int main(int argc, char const *argv[]) {
   // ----- Compute "registered but no tool config" -----
   // The accurate definition we want: a registered tool_type appears in
   // `registered_no_fcl` iff no `.fcl` we scanned declared it. Providers
-  // whose fhicl was found but failed/skipped are NOT the same thing — they
-  // have a fhicl, it just didn't load — so those tool_types must also be
+  // whose fhicl was found but failed/skipped are NOT the same thing -- they
+  // have a fhicl, it just didn't load -- so those tool_types must also be
   // excluded from this list. Collect tool_types declared by *any* scanned
   // tool-config (regardless of load outcome), plus those from providers
   // that loaded successfully, and subtract from the registered set.

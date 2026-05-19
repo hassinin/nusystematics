@@ -56,7 +56,7 @@ constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
 //      in the bucket (ZExpPCAWeighter -> CCQE, ResIso -> RES).
 //   2. The GENIEReWeight_<BUCKET> convention: the substring after the last
 //      underscore is the bucket.
-//   3. Otherwise return an empty string (unmapped) — the dial won't be
+//   3. Otherwise return an empty string (unmapped) -- the dial won't be
 //      selectable by any --mode filter, only by the unfiltered view.
 inline std::string ModeForProvider(const std::string &provider_fq) {
   // 1. hardcoded overrides keyed on the tool_type prefix
@@ -84,7 +84,7 @@ void SayUsage(char const *argv[]) {
     "    --mode <BUCKET>       Filter to dials whose provider maps to BUCKET.\n"
     "                          One of: CCQE, CCRES, NCEL, NCRES, RES, COH,\n"
     "                          DIS, MEC, SPP, FSI. Each provider is mapped\n"
-    "                          to exactly one bucket — FSI shows only FSI\n"
+    "                          to exactly one bucket -- FSI shows only FSI\n"
     "                          dials; CCQE includes ZExpPCAWeighter's b1..b4;\n"
     "                          RES includes ResIso.\n"
     "    -p <par1,par2,...>    Filter dials by name substring\n"
@@ -280,7 +280,7 @@ int main(int argc, char const *argv[]) {
               << "        Pass --refresh to force regeneration." << std::endl;
   }
 
-  // Walk the fhicl directly — no response_helper, no GENIE tune build, no
+  // Walk the fhicl directly -- no response_helper, no GENIE tune build, no
   // provider instantiation. All the fields we display are static keys in
   // the parameter-headers fhicl, so reading them straight from the
   // ParameterSet is hundreds of times faster than going through
