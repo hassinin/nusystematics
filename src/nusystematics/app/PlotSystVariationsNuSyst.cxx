@@ -91,6 +91,13 @@ VarDef ResolveVar(const std::string &name) {
 // ===== Channel classification ==============================================
 struct EventVars {
   double Enu, q0, Q2, q3, w, plep, coslep, EAvail, leading_proton_KE, xsec;
+  // Magnitude of highest-|p| proton's 3-momentum (-999 if no FS proton).
+  double leading_proton_p;
+  // Bjorken x and lepton momentum decomposition (along / perpendicular to
+  // the incoming neutrino direction).
+  double Bjorken_x;
+  double plep_L;
+  double plep_T;
   double Emiss, pmiss, Ereco_cal;
   int nproton, npip, npim, npi0, nneutron;
   bool is_cc, is_qe, is_mec, is_res, is_dis;
@@ -377,6 +384,10 @@ double GetVarValue(const EventVars &ev, const std::string &branch) {
   if (branch == "coslep") return ev.has_coslep ? ev.coslep : -999;
   if (branch == "EAvail_GeV") return ev.EAvail;
   if (branch == "leading_proton_KE") return ev.has_leading_proton ? ev.leading_proton_KE : -999;
+  if (branch == "leading_proton_p")  return ev.leading_proton_p;
+  if (branch == "Bjorken_x")         return ev.Bjorken_x;
+  if (branch == "plep_L")            return ev.plep_L;
+  if (branch == "plep_T")            return ev.plep_T;
   if (branch == "Emiss") return ev.Emiss;
   if (branch == "pmiss") return ev.pmiss;
   if (branch == "Ereco_cal") return ev.Ereco_cal;
@@ -483,6 +494,9 @@ void FillFromFlatTree(
   bool is_cc = false, is_qe = false, is_mec = false, is_res = false, is_dis = false;
   double q0 = 0, Q2 = 0, q3 = 0, w = 0, plep = 0, Enu_true = 0, EAvail_GeV = 0;
   double Emiss = 0, pmiss = 0;
+  double Ereco_cal_b = 0;
+  double leading_proton_p_b = 0, Bjorken_x_b = 0, plep_L_b = 0, plep_T_b = 0;
+  int nproton_b = 0, npip_b = 0, npim_b = 0, npi0_b = 0, nneutron_b = 0;
   std::vector<double> *fsprotons_KE = nullptr;
   std::vector<int> *fsi_pdgs = nullptr;
 
@@ -513,6 +527,29 @@ void FillFromFlatTree(
 
   bool has_fsi_pdgs = tree->GetBranch("fsi_pdgs") != nullptr;
   if (has_fsi_pdgs) tree->SetBranchAddress("fsi_pdgs", &fsi_pdgs);
+
+  // Optional scalar branches written by the newer DumpConfiguredTweaks.
+  // When present they override the fallback calculations below.
+  bool has_Ereco_b   = tree->GetBranch("Ereco_cal")        != nullptr;
+  bool has_LeadP_b   = tree->GetBranch("leading_proton_p") != nullptr;
+  bool has_Bx_b      = tree->GetBranch("Bjorken_x")        != nullptr;
+  bool has_pL_b      = tree->GetBranch("plep_L")           != nullptr;
+  bool has_pT_b      = tree->GetBranch("plep_T")           != nullptr;
+  bool has_nproton_b = tree->GetBranch("nproton")          != nullptr;
+  bool has_npip_b    = tree->GetBranch("npip")             != nullptr;
+  bool has_npim_b    = tree->GetBranch("npim")             != nullptr;
+  bool has_npi0_b    = tree->GetBranch("npi0")             != nullptr;
+  bool has_nneut_b   = tree->GetBranch("nneutron")         != nullptr;
+  if (has_Ereco_b)   tree->SetBranchAddress("Ereco_cal",        &Ereco_cal_b);
+  if (has_LeadP_b)   tree->SetBranchAddress("leading_proton_p", &leading_proton_p_b);
+  if (has_Bx_b)      tree->SetBranchAddress("Bjorken_x",        &Bjorken_x_b);
+  if (has_pL_b)      tree->SetBranchAddress("plep_L",           &plep_L_b);
+  if (has_pT_b)      tree->SetBranchAddress("plep_T",           &plep_T_b);
+  if (has_nproton_b) tree->SetBranchAddress("nproton",          &nproton_b);
+  if (has_npip_b)    tree->SetBranchAddress("npip",             &npip_b);
+  if (has_npim_b)    tree->SetBranchAddress("npim",             &npim_b);
+  if (has_npi0_b)    tree->SetBranchAddress("npi0",             &npi0_b);
+  if (has_nneut_b)   tree->SetBranchAddress("nneutron",         &nneutron_b);
 
   // Tweak response branches
   struct PBranch {
@@ -564,20 +601,52 @@ void FillFromFlatTree(
     evars.has_coslep = false; evars.coslep = -999;
     evars.has_leading_proton = has_proton_branch && fsprotons_KE && !fsprotons_KE->empty();
     evars.leading_proton_KE = evars.has_leading_proton ? (*fsprotons_KE)[0] : -999;
+    evars.leading_proton_p = has_LeadP_b ? leading_proton_p_b : -999;
     evars.Emiss = has_Emiss ? Emiss : -999;
     evars.pmiss = has_pmiss ? pmiss : -999;
 
-    // Calorimetric reco energy: Eavail + lepton energy (simple calorimetric)
-    double Elep = std::sqrt(plep * plep + 0.10566 * 0.10566); // assume muon mass
-    evars.Ereco_cal = EAvail_GeV + Elep;
+    // Calorimetric reco energy: Eavail + lepton energy (simple calorimetric).
+    // Prefer the branch when DumpConfiguredTweaks wrote it; fall back to a
+    // muon-mass approximation otherwise.
+    if (has_Ereco_b) {
+      evars.Ereco_cal = Ereco_cal_b;
+    } else {
+      double Elep = std::sqrt(plep * plep + 0.10566 * 0.10566);
+      evars.Ereco_cal = EAvail_GeV + Elep;
+    }
 
-    // Particle multiplicities from flat tree
-    evars.nproton = has_proton_branch && fsprotons_KE ? (int)fsprotons_KE->size() : 0;
-    evars.npip = 0; evars.npim = 0; evars.npi0 = 0; evars.nneutron = 0;
-    // fsi_pdgs is the list of FS hadron PDGs — but the flat tree stores these
-    // as intranuclear particles, not final state. We don't have FS particle
-    // multiplicities directly for pions/neutrons in the flat tree.
-    // For now set to 0; GHEP mode will compute them properly.
+    // Particle multiplicities: prefer scalar branches when present, else 0.
+    evars.nproton = has_nproton_b
+                        ? nproton_b
+                        : (has_proton_branch && fsprotons_KE ? (int)fsprotons_KE->size() : 0);
+    evars.npip      = has_npip_b  ? npip_b  : 0;
+    evars.npim      = has_npim_b  ? npim_b  : 0;
+    evars.npi0      = has_npi0_b  ? npi0_b  : 0;
+    evars.nneutron  = has_nneut_b ? nneutron_b : 0;
+
+    // Bjorken x: prefer the branch, else compute Q2/(2 M_N q0).
+    if (has_Bx_b) {
+      evars.Bjorken_x = Bjorken_x_b;
+    } else {
+      double safe_q0 = (q0 > 1e-9) ? q0 : 1e-9;
+      evars.Bjorken_x = Q2 / (2.0 * 0.9389 * safe_q0);
+    }
+
+    // pL / pT: prefer branches, else approximate assuming neutrino along z.
+    // For an incoming neutrino aligned with z, plep_L = (plep^2 + Enu^2 - q3^2)/(2 Enu).
+    if (has_pL_b) {
+      evars.plep_L = plep_L_b;
+    } else if (Enu_true > 1e-9) {
+      evars.plep_L = (plep * plep + Enu_true * Enu_true - q3 * q3) / (2.0 * Enu_true);
+    } else {
+      evars.plep_L = -999;
+    }
+    if (has_pT_b) {
+      evars.plep_T = plep_T_b;
+    } else {
+      double pT2 = plep * plep - evars.plep_L * evars.plep_L;
+      evars.plep_T = (pT2 > 0) ? std::sqrt(pT2) : -999;
+    }
 
     counts.Count(evars);
     std::string chkey = MakeChannelKey(evars);
@@ -709,9 +778,10 @@ void FillFromGHEP(
     evars.coslep = FSLepP4.CosTheta();
     evars.EAvail = GetErecoil_MINERvA_LowRecoil(GenieGHep);
 
-    // FS particle loop: proton KE, multiplicities
+    // FS particle loop: proton KE / |p|, multiplicities
     evars.has_leading_proton = false;
     evars.leading_proton_KE = -999;
+    evars.leading_proton_p = -999;
     evars.nproton = 0; evars.npip = 0; evars.npim = 0; evars.npi0 = 0; evars.nneutron = 0;
     genie::GHepParticle *p = nullptr;
     TIter iter(&GenieGHep);
@@ -722,7 +792,12 @@ void FillFromGHEP(
       if (pdgc == 2212) {
         evars.nproton++;
         double ke = p->KinE();
-        if (ke > max_pKE) { max_pKE = ke; evars.has_leading_proton = true; evars.leading_proton_KE = ke; }
+        if (ke > max_pKE) {
+          max_pKE = ke;
+          evars.has_leading_proton = true;
+          evars.leading_proton_KE = ke;
+          evars.leading_proton_p  = p->P4()->Vect().Mag();
+        }
       }
       else if (pdgc ==  211) evars.npip++;
       else if (pdgc == -211) evars.npim++;
@@ -734,6 +809,28 @@ void FillFromGHEP(
     evars.pmiss = GetPmiss(GenieGHep, false);
     double Elep = std::sqrt(evars.plep * evars.plep + 0.10566 * 0.10566);
     evars.Ereco_cal = evars.EAvail + Elep;
+
+    // Bjorken x and lepton momentum projections.
+    {
+      double safe_q0 = (evars.q0 > 1e-9) ? evars.q0 : 1e-9;
+      evars.Bjorken_x = evars.Q2 / (2.0 * MN * safe_q0);
+    }
+    {
+      TVector3 nuDir = ISLepP4.Vect();
+      double nu_mag  = nuDir.Mag();
+      if (nu_mag > 1e-9) {
+        nuDir *= 1.0 / nu_mag;
+        TVector3 lp   = FSLepP4.Vect();
+        double pL     = lp.Dot(nuDir);
+        double pmag   = lp.Mag();
+        double pT2    = std::max(0.0, pmag * pmag - pL * pL);
+        evars.plep_L  = pL;
+        evars.plep_T  = std::sqrt(pT2);
+      } else {
+        evars.plep_L = -999;
+        evars.plep_T = -999;
+      }
+    }
 
     evars.is_cc = GenieGHep.Summary()->ProcInfo().IsWeakCC();
     evars.is_qe = GenieGHep.Summary()->ProcInfo().IsQuasiElastic();

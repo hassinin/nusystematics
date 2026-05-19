@@ -124,13 +124,61 @@ struct TweakSummaryTree {
   int res_channel;
   bool is_dis;
   double EAvail_GeV;
+  // Calorimetric reconstructed neutrino energy: EAvail + E_lep. Same
+  // definition as PlotSystVariationsNuSyst's EventVars.Ereco_cal.
+  double Ereco_cal;
+  // FS particle multiplicities (no KE threshold) -- derivable from
+  // fsparticles_pdg via Sum$(fsparticles_pdg==2212) etc., but exposed as
+  // dedicated scalar branches because they're commonly plotted.
+  int nproton, npip, npim, npi0, nneutron;
   std::vector<int> fsi_pdgs;
   std::vector<int> fsi_codes;
   // TKI
   std::vector<double> fsprotons_KE;
+  // Highest-|p| proton momentum magnitude -- different from
+  // fsprotons_KE[0] in general (sorted by KE, not |p|) though they
+  // coincide for non-pathological samples.
+  double leading_proton_p;
+  // Bjorken scaling variable x = Q^2 / (2 M_N q0). Useful for DIS plots.
+  double Bjorken_x;
+  // Final-state lepton momentum projected along (parallel) and perpendicular
+  // to the incoming-neutrino direction. Both in GeV.
+  double plep_L;
+  double plep_T;
   double deltaPT, deltaalphaT;
   // Experimenting signal selection here..
   bool IsSignal_ICARUS_1muNp0pi;
+
+  // Full per-particle info, captured at three stages of the interaction so
+  // downstream tools can build arbitrary TTreeFormula expressions without
+  // recompiling. Each (pdg, px, py, pz, E) tuple is index-aligned across
+  // the five vectors of its stage.
+  //
+  //   fsparticles_*        kIStStableFinalState   final state after FSI
+  //   prefsi_particles_*   kIStHadronInTheNucleus pre-FSI hadrons (the
+  //                                                primary interaction
+  //                                                products before INTRANUKE
+  //                                                propagates them)
+  //   isparticles_*        kIStInitialState       initial state (incoming
+  //                                                neutrino, target nucleus,
+  //                                                struck nucleon)
+  std::vector<int>    fsparticles_pdg;
+  std::vector<double> fsparticles_px;
+  std::vector<double> fsparticles_py;
+  std::vector<double> fsparticles_pz;
+  std::vector<double> fsparticles_E;
+
+  std::vector<int>    prefsi_particles_pdg;
+  std::vector<double> prefsi_particles_px;
+  std::vector<double> prefsi_particles_py;
+  std::vector<double> prefsi_particles_pz;
+  std::vector<double> prefsi_particles_E;
+
+  std::vector<int>    isparticles_pdg;
+  std::vector<double> isparticles_px;
+  std::vector<double> isparticles_py;
+  std::vector<double> isparticles_pz;
+  std::vector<double> isparticles_E;
 
   std::vector<int> ntweaks;
   std::vector<std::vector<double>> tweak_branches;
@@ -173,9 +221,42 @@ struct TweakSummaryTree {
     t->Branch("res_channel", &res_channel, "res_channel/I");
     t->Branch("is_dis", &is_dis, "is_dis/O");
     t->Branch("EAvail_GeV", &EAvail_GeV, "EAvail_GeV/D");
+    t->Branch("Ereco_cal",  &Ereco_cal,  "Ereco_cal/D");
+    t->Branch("nproton",    &nproton,    "nproton/I");
+    t->Branch("npip",       &npip,       "npip/I");
+    t->Branch("npim",       &npim,       "npim/I");
+    t->Branch("npi0",       &npi0,       "npi0/I");
+    t->Branch("nneutron",   &nneutron,   "nneutron/I");
     t->Branch("fsi_pdgs", "vector<int>", &fsi_pdgs);
     t->Branch("fsi_codes", "vector<int>", &fsi_codes);
     t->Branch("fsprotons_KE", "vector<double>", &fsprotons_KE);
+    t->Branch("leading_proton_p", &leading_proton_p, "leading_proton_p/D");
+    t->Branch("Bjorken_x",        &Bjorken_x,        "Bjorken_x/D");
+    t->Branch("plep_L",           &plep_L,           "plep_L/D");
+    t->Branch("plep_T",           &plep_T,           "plep_T/D");
+
+    // Per-FS-particle 4-vectors + PDG (index-aligned across the five branches).
+    t->Branch("fsparticles_pdg", "vector<int>",    &fsparticles_pdg);
+    t->Branch("fsparticles_px",  "vector<double>", &fsparticles_px);
+    t->Branch("fsparticles_py",  "vector<double>", &fsparticles_py);
+    t->Branch("fsparticles_pz",  "vector<double>", &fsparticles_pz);
+    t->Branch("fsparticles_E",   "vector<double>", &fsparticles_E);
+
+    // Pre-FSI hadrons (kIStHadronInTheNucleus): the primary interaction
+    // products before INTRANUKE propagates them.
+    t->Branch("prefsi_particles_pdg", "vector<int>",    &prefsi_particles_pdg);
+    t->Branch("prefsi_particles_px",  "vector<double>", &prefsi_particles_px);
+    t->Branch("prefsi_particles_py",  "vector<double>", &prefsi_particles_py);
+    t->Branch("prefsi_particles_pz",  "vector<double>", &prefsi_particles_pz);
+    t->Branch("prefsi_particles_E",   "vector<double>", &prefsi_particles_E);
+
+    // Initial state (kIStInitialState): incoming neutrino, target nucleus,
+    // struck nucleon.
+    t->Branch("isparticles_pdg", "vector<int>",    &isparticles_pdg);
+    t->Branch("isparticles_px",  "vector<double>", &isparticles_px);
+    t->Branch("isparticles_py",  "vector<double>", &isparticles_py);
+    t->Branch("isparticles_pz",  "vector<double>", &isparticles_pz);
+    t->Branch("isparticles_E",   "vector<double>", &isparticles_E);
     t->Branch("deltaPT", &deltaPT, "deltaPT/D");
     t->Branch("deltaalphaT", &deltaalphaT, "deltaalphaT/D");
     t->Branch("IsSignal_ICARUS_1muNp0pi", &IsSignal_ICARUS_1muNp0pi, "IsSignal_ICARUS_1muNp0pi/O");
@@ -455,7 +536,7 @@ LoadAppliesToChannelsMap(const std::string &fclname,
   return out;
 }
 
-// Build a "trivial" response for a provider — one VarAndCVResponse per
+// Build a "trivial" response for a provider -- one VarAndCVResponse per
 // non-responseless dial, with CV=1 and every variation weight =1. Used as a
 // drop-in for `GetEventVariationAndCVResponse` when the provider is skipped
 // for the current event's channel.
@@ -563,7 +644,7 @@ int RunSerial() {
       std::cerr << "[INFO]: -p filter kept " << kept.size() << " of "
                 << provider_names.size() << " providers ("
                 << (provider_names.size() - kept.size())
-                << " skipped — neither constructed nor evaluated).\n";
+                << " skipped -- neither constructed nor evaluated).\n";
     }
 
     {
@@ -574,7 +655,7 @@ int RunSerial() {
     }
 
     // Re-derive applies_to_channels from the (possibly filtered) PS instead
-    // of re-reading the file — keeps the two views in sync.
+    // of re-reading the file -- keeps the two views in sync.
     auto provider_names =
         gen_ps.get<std::vector<std::string>>("syst_providers",
                                               std::vector<std::string>{});
@@ -614,7 +695,7 @@ int RunSerial() {
   // Surface the GENIE version/tune that generated this sample so the user can
   // diagnose version-skew issues (e.g. samples from GENIE 3.04 carry
   // QE-event phase-space labels that GENIE 3.06's reweight can't transform).
-  // Only the orchestrator (worker_id < 0) reports — workers stay quiet.
+  // Only the orchestrator (worker_id < 0) reports -- workers stay quiet.
   if (cliopts::worker_id < 0) {
     nusyst::metadata::ReportSampleInfo(cliopts::genie_input);
   }
@@ -721,6 +802,35 @@ int RunSerial() {
     tst.is_dis = GenieGHep.Summary()->ProcInfo().IsDeepInelastic();
 
     tst.EAvail_GeV = GetErecoil_MINERvA_LowRecoil(GenieGHep);
+    // Calorimetric reconstructed neutrino energy = EAvail + E_lep. Matches
+    // PlotSystVariationsNuSyst's EventVars.Ereco_cal definition.
+    tst.Ereco_cal = tst.EAvail_GeV + FSLepP4.E();
+
+    // Bjorken x = Q^2 / (2 M_N q0). Guard q0 -> 0 with a tiny floor.
+    {
+      double safe_q0 = (tst.q0 > 1e-9) ? tst.q0 : 1e-9;
+      tst.Bjorken_x = tst.Q2 / (2.0 * MN * safe_q0);
+    }
+
+    // pL = lepton momentum along the IS-neutrino direction,
+    // pT = lepton momentum perpendicular to it. Falls back to (plep, 0) if
+    // the neutrino is along +z (no preferred direction in some test files).
+    {
+      TVector3 nuDir = ISLepP4.Vect();
+      double nu_mag = nuDir.Mag();
+      if (nu_mag > 1e-9) {
+        nuDir *= 1.0 / nu_mag;
+        TVector3 lp = FSLepP4.Vect();
+        double pL = lp.Dot(nuDir);
+        double pmag = lp.Mag();
+        double pT2 = std::max(0.0, pmag * pmag - pL * pL);
+        tst.plep_L = pL;
+        tst.plep_T = std::sqrt(pT2);
+      } else {
+        tst.plep_L = tst.plep;
+        tst.plep_T = 0.0;
+      }
+    }
 
     // loop over particles
     int ip=-1;
@@ -729,6 +839,28 @@ int RunSerial() {
 
     std::vector<int> fsi_pdgs;
     std::vector<int> fsi_codes;
+
+    // Reset per-FS-particle vectors + multiplicity counters for the new event.
+    tst.fsparticles_pdg.clear();
+    tst.fsparticles_px.clear();
+    tst.fsparticles_py.clear();
+    tst.fsparticles_pz.clear();
+    tst.fsparticles_E.clear();
+    tst.prefsi_particles_pdg.clear();
+    tst.prefsi_particles_px.clear();
+    tst.prefsi_particles_py.clear();
+    tst.prefsi_particles_pz.clear();
+    tst.prefsi_particles_E.clear();
+    tst.isparticles_pdg.clear();
+    tst.isparticles_px.clear();
+    tst.isparticles_py.clear();
+    tst.isparticles_pz.clear();
+    tst.isparticles_E.clear();
+    tst.nproton = 0;
+    tst.npip = 0;
+    tst.npim = 0;
+    tst.npi0 = 0;
+    tst.nneutron = 0;
 
     // Particle loop
     std::vector<GHepParticle *> protons;
@@ -760,10 +892,48 @@ int RunSerial() {
           fsi_pdgs.push_back(pdgc);
           fsi_codes.push_back(fsi_code);
         }
+        // Record the pre-FSI hadron 4-vector regardless of FSI-code support.
+        // These are the primary interaction products before INTRANUKE
+        // propagates them.
+        TLorentzVector const *p4 = p->P4();
+        tst.prefsi_particles_pdg.push_back(pdgc);
+        tst.prefsi_particles_px.push_back(p4->Px());
+        tst.prefsi_particles_py.push_back(p4->Py());
+        tst.prefsi_particles_pz.push_back(p4->Pz());
+        tst.prefsi_particles_E.push_back(p4->E());
+      }
+
+      // Initial state: probe + target nucleus + struck nucleon (whichever
+      // entries GENIE flags as IS for this interaction).
+      if (ist == genie::kIStInitialState) {
+        TLorentzVector const *p4 = p->P4();
+        tst.isparticles_pdg.push_back(pdgc);
+        tst.isparticles_px.push_back(p4->Px());
+        tst.isparticles_py.push_back(p4->Py());
+        tst.isparticles_pz.push_back(p4->Pz());
+        tst.isparticles_E.push_back(p4->E());
       }
 
       // Stable final state particle
       if(ist==genie::kIStStableFinalState){
+        // Record this particle's full 4-vector so downstream TTreeFormula
+        // expressions in `nusyst plots` can compute arbitrary quantities
+        // (e.g. leading-momentum proton energy) without recompiling.
+        TLorentzVector const *p4 = p->P4();
+        tst.fsparticles_pdg.push_back(pdgc);
+        tst.fsparticles_px.push_back(p4->Px());
+        tst.fsparticles_py.push_back(p4->Py());
+        tst.fsparticles_pz.push_back(p4->Pz());
+        tst.fsparticles_E.push_back(p4->E());
+
+        // Multiplicity counters (no KE threshold; mirrors EventVars in
+        // PlotSystVariationsNuSyst's GHEP-mode fill).
+        if      (pdgc ==  2212) tst.nproton++;
+        else if (pdgc ==   211) tst.npip++;
+        else if (pdgc ==  -211) tst.npim++;
+        else if (pdgc ==   111) tst.npi0++;
+        else if (pdgc ==  2112) tst.nneutron++;
+
         // All FS protons for generic purpose
         if(is_proton){
           protons.push_back(p);
@@ -810,9 +980,13 @@ int RunSerial() {
               });
 
     tst.fsprotons_KE.clear();
+    tst.leading_proton_p = -999;
+    double max_p_proton = -1;
     for(const auto& proton: protons){
       double this_KE = proton->KinE();
       tst.fsprotons_KE.push_back(this_KE);
+      double pmag = proton->P4()->Vect().Mag();
+      if (pmag > max_p_proton) { max_p_proton = pmag; tst.leading_proton_p = pmag; }
     }
     // Calculate TKI
     double deltaPT = -999.;
@@ -851,7 +1025,7 @@ int RunSerial() {
 
     
 
-    // Calcuate weights — per-provider loop so we can skip providers whose
+    // Calcuate weights -- per-provider loop so we can skip providers whose
     // `applies_to_channels` patterns don't match this event's topology.
     // Skipped providers contribute a trivial response (CV=1, all variations=1)
     // for each of their dials, preserving the event's flat-tree shape.
