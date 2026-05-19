@@ -50,6 +50,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <cstdlib>
 
 using namespace systtools;
 using namespace nusyst;
@@ -280,7 +281,18 @@ void HandleOpts(int argc, char const *argv[]) {
     else if (s == "-i") cliopts::input_file = argv[++opt];
     else if (s == "-c") cliopts::fclname = argv[++opt];
     else if (s == "-k") cliopts::fhicl_key = argv[++opt];
-    else if (s == "-o") cliopts::output_base = argv[++opt];
+    else if (s == "-o") {
+      // Strip trailing .pdf / .root so users can pass a full filename.
+      std::string v = argv[++opt];
+      for (auto const &ext : {std::string(".pdf"), std::string(".root")}) {
+        if (v.size() >= ext.size() &&
+            v.compare(v.size() - ext.size(), ext.size(), ext) == 0) {
+          v.erase(v.size() - ext.size());
+          break;
+        }
+      }
+      cliopts::output_base = v;
+    }
     else if (s == "-t") cliopts::treename = argv[++opt];
     else if (s == "-b") cliopts::genie_branch_name = argv[++opt];
     else if (s == "-N") cliopts::NMax = str2T<size_t>(argv[++opt]);
@@ -1300,8 +1312,22 @@ void WriteROOT(const HistMap &allhists) {
 }
 
 // ===== main ================================================================
+namespace {
+constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
+constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+} // namespace
+
 int main(int argc, char const *argv[]) {
   HandleOpts(argc, argv);
+
+  // Allow `-p ...` without `-c`: fall back to a cached inventory fcl from
+  // NUSYST_INVENTORY_FCL or a well-known default path.
+  if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
+    char const *env = std::getenv(kInventoryEnvVar);
+    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    std::cout << "[INFO]: -c not given; using cached inventory '"
+              << cliopts::fclname << "' to resolve -p selection." << std::endl;
+  }
 
   if (cliopts::input_file.empty()) {
     std::cout << "[ERROR]: -i <input> is required." << std::endl;

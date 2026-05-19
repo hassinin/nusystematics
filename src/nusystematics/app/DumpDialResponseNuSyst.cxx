@@ -16,6 +16,10 @@
 #include "nusystematics/utility/silence_genie.hh"
 
 #include "fhiclcpp/ParameterSet.h"
+#include "cetlib/filepath_maker.h"
+
+#include <cstdlib>
+#include <unistd.h>
 
 #include "Framework/EventGen/EventRecord.h"
 #include "Framework/GHEP/GHepParticle.h"
@@ -85,7 +89,20 @@ void HandleOpts(int argc, char const *argv[]) {
     if (s == "-?" || s == "--help") { SayUsage(argv); exit(0); }
     else if (s == "-c") cliopts::fclname = argv[++opt];
     else if (s == "-i") cliopts::input_file = argv[++opt];
-    else if (s == "-o") cliopts::output_base = argv[++opt];
+    else if (s == "-o") {
+      // -o is a *base* name; the tool appends .pdf and .root. If the user
+      // passed e.g. `-o foo.pdf`, strip the extension so we don't produce
+      // `foo.pdf.pdf` / `foo.pdf.root`.
+      std::string v = argv[++opt];
+      for (auto const &ext : {std::string(".pdf"), std::string(".root")}) {
+        if (v.size() >= ext.size() &&
+            v.compare(v.size() - ext.size(), ext.size(), ext) == 0) {
+          v.erase(v.size() - ext.size());
+          break;
+        }
+      }
+      cliopts::output_base = v;
+    }
     else if (s == "-b") cliopts::genie_branch_name = argv[++opt];
     else if (s == "-n") cliopts::n_per_channel = str2T<int>(argv[++opt]);
     else if (s == "-N") cliopts::NMax = str2T<size_t>(argv[++opt]);
@@ -185,24 +202,100 @@ struct EventRef {
 using ResponseMap = std::map<std::string, std::map<std::string, std::vector<std::pair<Long64_t, std::vector<double>>>>>;
 // ResponseMap[dial_fullname][channel] -> list of (event_index, weights)
 
+// ===== Cache resolution + provider-level filter (shared with nusyst tweaks) =
+// If `-c` is omitted while `-p` is given, resolve fclname against the cached
+// kitchen-sink path ($NUSYST_INVENTORY_FCL then /tmp/nusyst_inventory.fcl),
+// auto-generating via `nusyst config` on first use.
+constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
+constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+
+// Returns true if `name` matches any substring in cliopts::parameters, or if
+// the filter is empty (no filter = keep everything).
+bool DialMatchesPFilter(const std::string &name) {
+  if (cliopts::parameters.empty()) return true;
+  for (auto const &sub : cliopts::parameters)
+    if (name.find(sub) != std::string::npos) return true;
+  return false;
+}
+
 // ===== Main ================================================================
 int main(int argc, char const *argv[]) {
   HandleOpts(argc, argv);
 
+  // Cache fallback for the common `-p DialName -i events.root -o curves`
+  // invocation. Same resolution + auto-generation as nusyst inventory / tweaks.
+  if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
+    char const *env = std::getenv(kInventoryEnvVar);
+    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
+      std::cerr << "[INFO]: -p was given without -c; auto-generating "
+                << cliopts::fclname << " via `nusyst config --mode all`.\n";
+      std::string cmd = "GenerateAllDialsConfigNuSyst --mode all -o " +
+                        cliopts::fclname + " > /dev/null 2>&1";
+      if (std::system(cmd.c_str()) != 0) {
+        std::cerr << "[ERROR]: Auto-generation failed; re-running visibly:\n";
+        std::system(("GenerateAllDialsConfigNuSyst --mode all -o " +
+                     cliopts::fclname).c_str());
+        return 3;
+      }
+    }
+  }
+
   if (cliopts::fclname.empty() || cliopts::input_file.empty()) {
-    std::cout << "[ERROR]: -c and -i are required." << std::endl;
+    std::cout << "[ERROR]: -c and -i are required.\n"
+                 "         (Pass -p <dial,...> to auto-resolve -c from the "
+                 "cached kitchen sink.)" << std::endl;
     SayUsage(argv);
     return 1;
   }
 
-  // Load providers — silence GENIE banner + per-provider chatter.
+  // Load providers -- silence GENIE banner + per-provider chatter.
+  // Two-step load so a -p filter can drop providers whose dials all miss
+  // before any provider is instantiated.
   nusyst::quiet::SetGlobalQuiet();
   response_helper phh;
   {
     nusyst::quiet::StdoutSink _quiet;
     genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
         "Messenger_whisper.xml");
-    phh = response_helper(cliopts::fclname);
+
+    fhicl::ParameterSet raw_ps;
+    {
+      std::unique_ptr<cet::filepath_maker> fm =
+          std::make_unique<cet::filepath_lookup_nonabsolute>("FHICL_FILE_PATH");
+      raw_ps = fhicl::ParameterSet::make(cliopts::fclname, *fm);
+    }
+    fhicl::ParameterSet gen_ps = raw_ps.get<fhicl::ParameterSet>(
+        "generated_systematic_provider_configuration");
+
+    if (!cliopts::parameters.empty()) {
+      auto provider_names =
+          gen_ps.get<std::vector<std::string>>("syst_providers");
+      std::vector<std::string> kept;
+      for (auto const &pname : provider_names) {
+        fhicl::ParameterSet prov;
+        try { prov = gen_ps.get<fhicl::ParameterSet>(pname); }
+        catch (...) { continue; }
+        bool any_match = false;
+        for (auto const &key : prov.get_names()) {
+          if (!prov.is_key_to_table(key)) continue;
+          try {
+            fhicl::ParameterSet sub = prov.get<fhicl::ParameterSet>(key);
+            if (!sub.has_key("prettyName")) continue;
+            std::string pretty = sub.get<std::string>("prettyName");
+            if (DialMatchesPFilter(pretty)) { any_match = true; break; }
+          } catch (...) {}
+        }
+        if (any_match) kept.push_back(pname);
+        else           gen_ps.erase(pname);
+      }
+      gen_ps.put_or_replace<std::vector<std::string>>("syst_providers", kept);
+      std::cerr << "[INFO]: -p filter kept " << kept.size() << " of "
+                << provider_names.size() << " providers ("
+                << (provider_names.size() - kept.size())
+                << " skipped -- neither constructed nor evaluated).\n";
+    }
+    phh.LoadProvidersAndHeaders(gen_ps);
   }
 
   // Collect dial info
@@ -486,7 +579,7 @@ int main(int argc, char const *argv[]) {
         TLatex tex;
         tex.SetNDC(); tex.SetTextFont(62); tex.SetTextSize(0.045);
         tex.DrawLatex(0.05, 0.93,
-                       Form("Table of contents (%zu/%zu) — %zu active dials",
+                       Form("Table of contents (%zu/%zu) -- %zu active dials",
                              pg + 1, n_pages, entries.size()));
         tex.SetTextFont(42); tex.SetTextSize(0.022);
         tex.DrawLatex(0.05, 0.89,
