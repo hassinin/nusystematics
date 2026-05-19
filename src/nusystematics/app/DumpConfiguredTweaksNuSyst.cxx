@@ -63,10 +63,27 @@ size_t NMax = std::numeric_limits<size_t>::max();
 size_t NSkip = 0;
 int n_threads = 1;     // -j / --threads N: spawn N worker processes via fork()
 int worker_id = -1;    // -1 == orchestrator / serial; >=0 == fork child index
+std::vector<std::string> parameters; // -p substr filter on dial prettyName
 #ifndef NO_ART
 int lookup_policy = 1;
 #endif
 } // namespace cliopts
+
+// Cache-resolution constants mirror those in DeclaredDialTestNuSyst so the
+// two tools share the same auto-generation behaviour: if no -c is passed,
+// fall back to $NUSYST_INVENTORY_FCL and then /tmp/nusyst_inventory.fcl,
+// auto-generating via GenerateAllDialsConfigNuSyst on first use.
+constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
+constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+
+// Returns true if `name` matches any substring in cliopts::parameters, or
+// if the filter is empty (no filter = keep everything).
+bool DialMatchesFilter(const std::string &name) {
+  if (cliopts::parameters.empty()) return true;
+  for (auto const &sub : cliopts::parameters)
+    if (name.find(sub) != std::string::npos) return true;
+  return false;
+}
 
 struct TweakSummaryTree {
   TFile *f = NULL;
@@ -174,6 +191,15 @@ struct TweakSummaryTree {
           continue;
         }
 
+        // -p filter: skip dials whose prettyName doesn't match any of the
+        // user-supplied substrings. The full kitchen-sink is still computed
+        // per event (response_helper iterates all providers); we just don't
+        // emit tree branches for the filtered-out dials, so the output file
+        // stays small. For a compute-speed win, hand-roll a tool config.
+        if (!DialMatchesFilter(hdr.prettyName)) {
+          continue;
+        }
+
         if (hdr.isCorrection) {
           ntweaks.emplace_back(1);
         } else {
@@ -199,6 +225,11 @@ struct TweakSummaryTree {
       for (paramId_t pid : phh.GetParameters()) {
         SystParamHeader const &hdr = phh.GetHeader(pid);
         if (hdr.isResponselessParam) {
+          continue;
+        }
+        // -p filter: same logic as the first pass above; skip dials that
+        // never got into tweak_indices.
+        if (!DialMatchesFilter(hdr.prettyName)) {
           continue;
         }
         size_t idx = tweak_indices[pid];
@@ -310,7 +341,20 @@ struct TweakSummaryTree {
 void SayUsage(char const *argv[]) {
   std::cout << "[USAGE]: " << argv[0] << "\n" << std::endl;
   std::cout << "\t-?|--help        : Show this message.\n"
-               "\t-c <config.fcl>  : fhicl file to read.\n"
+               "\t-c <config.fcl>  : fhicl file to read (parameter-headers\n"
+               "\t                   format, i.e. the output of\n"
+               "\t                   `nusyst config`). Optional: if omitted,\n"
+               "\t                   resolves to $NUSYST_INVENTORY_FCL\n"
+               "\t                   then /tmp/nusyst_inventory.fcl, auto-\n"
+               "\t                   generating via `nusyst config` if absent.\n"
+               "\t-p <par1,par2,...>: Filter to dials whose prettyName\n"
+               "\t                   contains any of the comma-separated\n"
+               "\t                   substrings. Providers whose dials all\n"
+               "\t                   miss the filter are not constructed and\n"
+               "\t                   not evaluated (compute-side skip);\n"
+               "\t                   non-matching dials within a kept\n"
+               "\t                   provider are still computed but not\n"
+               "\t                   written to the output tree.\n"
                "\t-k <list key>    : fhicl key to look for parameter headers,\n"
                "\t                   "
                "\"generated_systematic_provider_configuration\"\n"
@@ -340,6 +384,11 @@ void HandleOpts(int argc, char const *argv[]) {
       exit(0);
     } else if (std::string(argv[opt]) == "-c") {
       cliopts::fclname = argv[++opt];
+    } else if (std::string(argv[opt]) == "-p") {
+      std::string tok;
+      std::istringstream ss(argv[++opt]);
+      while (std::getline(ss, tok, ','))
+        if (!tok.empty()) cliopts::parameters.push_back(tok);
     } else if (std::string(argv[opt]) == "-k") {
       cliopts::fhicl_key = argv[++opt];
     } else if (std::string(argv[opt]) == "-i") {
@@ -430,6 +479,29 @@ int RunSerial();
 int DispatchWorkers();
 
 int RunSerial() {
+  // Cache fallback: a `-p` filter implicitly says "I want some reweights,
+  // configure them from the cached kitchen sink". Resolve fclname against
+  // $NUSYST_INVENTORY_FCL / /tmp/nusyst_inventory.fcl and auto-generate via
+  // `nusyst config` if missing, mirroring DeclaredDialTestNuSyst's logic.
+  // Plain `nusyst tweaks -i ghep.root -o out.root` (no -c, no -p) keeps the
+  // pre-existing "no reweights" behaviour for backwards compatibility.
+  if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
+    char const *env = std::getenv(kInventoryEnvVar);
+    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
+      std::cerr << "[INFO]: -p was given without -c; auto-generating "
+                << cliopts::fclname << " via `nusyst config --mode all`.\n";
+      std::string cmd = "GenerateAllDialsConfigNuSyst --mode all -o " +
+                        cliopts::fclname + " > /dev/null 2>&1";
+      if (std::system(cmd.c_str()) != 0) {
+        std::cerr << "[ERROR]: Auto-generation failed; re-running visibly:\n";
+        std::system(("GenerateAllDialsConfigNuSyst --mode all -o " +
+                     cliopts::fclname).c_str());
+        return 3;
+      }
+    }
+  }
+
   bool RunNuSyst = true;
   if (!cliopts::fclname.size()) {
     RunNuSyst = false;
@@ -446,14 +518,79 @@ int RunSerial() {
   std::map<std::string, std::vector<std::string>> applies_to_channels;
   size_t n_filtered_providers = 0;
   if(RunNuSyst){
+    // Load the parameter-headers fhicl as a ParameterSet so a -p filter can
+    // drop providers before they're constructed. Without the filter, the
+    // effect is identical to the old `response_helper(fclname)` one-shot.
+    fhicl::ParameterSet raw_ps;
+    {
+      std::unique_ptr<cet::filepath_maker> fm =
+          std::make_unique<cet::filepath_lookup_nonabsolute>("FHICL_FILE_PATH");
+      raw_ps = fhicl::ParameterSet::make(cliopts::fclname, *fm);
+    }
+    fhicl::ParameterSet gen_ps =
+        raw_ps.get<fhicl::ParameterSet>(cliopts::fhicl_key);
+
+    // Provider-level -p filter: drop any provider whose dials all miss the
+    // filter. These are not instantiated and not evaluated per event.
+    // Providers with a partial match are kept whole (still compute their
+    // full dial set); the per-dial output filter below trims their branches
+    // from the tree.
+    if (!cliopts::parameters.empty()) {
+      auto provider_names =
+          gen_ps.get<std::vector<std::string>>("syst_providers");
+      std::vector<std::string> kept;
+      for (auto const &pname : provider_names) {
+        fhicl::ParameterSet prov;
+        try { prov = gen_ps.get<fhicl::ParameterSet>(pname); }
+        catch (...) { continue; }
+        bool any_match = false;
+        for (auto const &key : prov.get_names()) {
+          if (!prov.is_key_to_table(key)) continue;
+          try {
+            fhicl::ParameterSet sub = prov.get<fhicl::ParameterSet>(key);
+            if (!sub.has_key("prettyName")) continue;
+            std::string pretty = sub.get<std::string>("prettyName");
+            if (DialMatchesFilter(pretty)) { any_match = true; break; }
+          } catch (...) {}
+        }
+        if (any_match) {
+          kept.push_back(pname);
+        } else {
+          gen_ps.erase(pname);
+        }
+      }
+      gen_ps.put_or_replace<std::vector<std::string>>("syst_providers", kept);
+      std::cerr << "[INFO]: -p filter kept " << kept.size() << " of "
+                << provider_names.size() << " providers ("
+                << (provider_names.size() - kept.size())
+                << " skipped — neither constructed nor evaluated).\n";
+    }
+
     {
       nusyst::quiet::StdoutSink _quiet;
       genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
           "Messenger_whisper.xml");
-      phh = response_helper(cliopts::fclname);
+      phh.LoadProvidersAndHeaders(gen_ps);
     }
-    applies_to_channels = LoadAppliesToChannelsMap(cliopts::fclname,
-                                                    cliopts::fhicl_key);
+
+    // Re-derive applies_to_channels from the (possibly filtered) PS instead
+    // of re-reading the file — keeps the two views in sync.
+    auto provider_names =
+        gen_ps.get<std::vector<std::string>>("syst_providers",
+                                              std::vector<std::string>{});
+    for (auto const &pname : provider_names) {
+      try {
+        fhicl::ParameterSet prov = gen_ps.get<fhicl::ParameterSet>(pname);
+        fhicl::ParameterSet topts =
+            prov.get<fhicl::ParameterSet>("tool_options",
+                                           fhicl::ParameterSet{});
+        auto patterns = topts.get<std::vector<std::string>>(
+            "applies_to_channels", std::vector<std::string>{});
+        if (!patterns.empty()) {
+          applies_to_channels[pname] = std::move(patterns);
+        }
+      } catch (...) {}
+    }
     for (auto &sp : phh.GetSystProvider()) {
       if (applies_to_channels.count(sp->GetFullyQualifiedName())) {
         ++n_filtered_providers;
