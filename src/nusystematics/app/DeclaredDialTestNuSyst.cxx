@@ -377,20 +377,20 @@ int main(int argc, char const *argv[]) {
             [](Row const &a, Row const &b) { return a.pid < b.pid; });
 
   // Footer behaviour:
-  //   - full inventory (no --mode):  print the categorised scan report
+  //   - full inventory (no --mode, no -p):  print the categorised scan report
   //     covering missing-fhicl / failed / skipped / inactive-GRW etc.
-  //   - filtered view (--mode set):  the report covers the whole config,
-  //     not just the filtered bucket, so showing it would be misleading
-  //     about what the user just listed. Replace it with a one-line
-  //     pointer back to the unfiltered command.
+  //   - filtered view (--mode or -p set):   the report covers the whole config,
+  //     not just the filtered bucket, so showing it would be misleading about
+  //     what the user just listed. Replace it with a one-line pointer back to
+  //     the unfiltered command.
   auto print_footer = [&]() {
-    if (cliopts::mode.empty()) {
+    if (cliopts::mode.empty() && cliopts::parameters.empty()) {
       PrintScanReportFooter(gen);
     } else {
       std::cout << "\n[NOTE]: This is a subset of the available dials. "
                    "Skipped or failed dials are not shown.\n"
                    "        To see the full list, run `nusyst inventory` "
-                   "without --mode.\n";
+                   "without --mode / -p.\n";
     }
   };
 
