@@ -31,6 +31,7 @@
 #include "TChain.h"
 #include "TFile.h"
 #include "TH1D.h"
+#include "TH2D.h"
 #include "TLegend.h"
 #include "TLatex.h"
 #include "TLine.h"
@@ -39,6 +40,7 @@
 #include "TStyle.h"
 #include "TROOT.h"
 #include "TColor.h"
+#include "TExec.h"
 #include "TTreeFormula.h"
 
 #include <algorithm>
@@ -102,6 +104,25 @@ inline std::string BuildYAxisTitle(VarDef const &vd) {
                         : std::string("cm^{2}/") + vd.units + "/nucleus";
   return numerator + " (" + denom + ")";
 }
+
+// A 2D plotting pair, used in `--dim 2` mode. Each pair just names two
+// existing 1D entries from the variable registry; binning, labels and
+// units inherit from those.
+struct Var2DPair {
+  std::string key;     // unique identifier and figure tag, e.g. "q0_q3"
+  std::string x_var;   // x-axis variable name (matches kPredefinedVars key)
+  std::string y_var;   // y-axis variable name
+};
+
+// Hardcoded 2D defaults. Same role as kPredefinedVars but for pairs.
+// Convention: x first, y second. q3 on x / q0 on y matches the canonical
+// nuclear-response (q3, q0) plane orientation.
+static const std::vector<Var2DPair> kPredefined2DPairs = {
+  {"q3_q0", "q3", "q0"},
+  {"Q2_W",  "Q2", "W"},
+  {"x_Q2",  "x",  "Q2"},
+  {"pL_pT", "pL", "pT"},
+};
 
 // Built-in variable registry. The runtime registry `g_vars_registry` starts
 // from a copy of this map and may be extended / overridden / disabled by
@@ -442,6 +463,15 @@ struct SystHists {
   std::vector<double> tweakvals;
 };
 
+// 2D analogue of SystHists. Same per-(channel, dial) ownership pattern; the
+// outer key in Hist2DMap is the Var2DPair::key (e.g. "q0_q3") rather than
+// the 1D var.branch.
+struct Syst2DHists {
+  TH2D *h_cv = nullptr;
+  std::vector<TH2D *> h_var;
+  std::vector<double> tweakvals;
+};
+
 struct ParamMeta {
   std::string fullname;
   int ntweaks;
@@ -462,6 +492,9 @@ size_t NMax = std::numeric_limits<size_t>::max();
 int nbins = 50;
 bool make_pdf = true;
 bool make_root = true;
+// 1 = 1D differential xsec mode (default); 2 = 2D pair mode with
+// -1sigma / CV / +1sigma per row. Higher dimensions are not supported.
+int dim = 1;
 // Page layout: how many (variable, channel) panels per PDF page. 6 keeps the
 // 3×2 default grid that fits 8.5×11 nicely; overridable via plot_config.
 int plots_per_page = 6;
@@ -495,6 +528,11 @@ void SayUsage(char const *argv[]) {
     "    --list-vars          Print the table of available -v variables and exit\n"
     "    --plot-config <f>    fhicl file overriding / adding plot variables.\n"
     "                         See config/PlotConfig.example.fcl for the schema.\n"
+    "    --dim <1|2>          Plot dimensionality. Default 1 (differential xsec\n"
+    "                         per kinematic variable). 2 produces 2D pair plots:\n"
+    "                         per (channel, dial) page, two rows of three\n"
+    "                         panels (-1sigma ratio | CV 2D | +1sigma ratio).\n"
+    "                         Default pairs: q0:q3, Q2:W, x:Q2, pL:pT.\n"
     "    -?|--help            Show this message\n"
     << std::endl;
 }
@@ -512,6 +550,14 @@ void HandleOpts(int argc, char const *argv[]) {
       // Load immediately so subsequent --list-vars sees the augmented set,
       // and so -v lookups can hit config-only entries.
       LoadPlotConfig(argv[++opt]);
+    }
+    else if (s == "--dim") {
+      cliopts::dim = str2T<int>(argv[++opt]);
+      if (cliopts::dim != 1 && cliopts::dim != 2) {
+        std::cerr << "[ERROR]: --dim must be 1 or 2 (got " << cliopts::dim
+                  << ")" << std::endl;
+        std::exit(2);
+      }
     }
     else if (s == "-i") cliopts::input_file = argv[++opt];
     else if (s == "-c") cliopts::fclname = argv[++opt];
@@ -655,6 +701,9 @@ double GetVarValue(const EventVars &ev, const std::string &branch) {
 // ===== Histogram map type ==================================================
 // allhists[channel][param][var] -> SystHists
 using HistMap = std::map<std::string, std::map<std::string, std::map<std::string, SystHists>>>;
+// Same shape, but the innermost key is a Var2DPair::key (e.g. "q0_q3") and
+// each entry holds TH2Ds instead of TH1Ds.
+using Hist2DMap = std::map<std::string, std::map<std::string, std::map<std::string, Syst2DHists>>>;
 
 // ===== applies_to_channels loader (mirrors DumpConfiguredTweaksNuSyst) ======
 // Re-parse the parameter-headers fhicl to extract per-provider
@@ -1042,6 +1091,226 @@ void FillFromFlatTree(
     }
   }
   std::cout << "\rProcessed " << nentries << " events.          " << std::endl;
+  tree->ResetBranchAddresses();
+}
+
+// ===== FLAT TREE MODE -- 2D ==================================================
+// Mirrors FillFromFlatTree but fills TH2Ds per (channel, dial, pair) instead
+// of TH1Ds per (channel, dial, var). 1D event reading + channel/applies
+// logic is re-used by calling GetVarValue() per axis variable.
+//
+// Histograms are booked lazily on first event for a given (channel, dial)
+// using the binning carried by each pair's x and y VarDef entries in the
+// runtime registry.
+void FillFromFlatTree2D(
+    TTree *tree, TTree *meta,
+    const std::vector<Var2DPair> &pairs,
+    const std::vector<ParamMeta> &params,
+    const std::map<std::string, std::vector<std::string>> &applies_to_channels,
+    Hist2DMap &allhists2d,
+    EventCounts &counts) {
+
+  // Resolve VarDefs for each pair up front; abort early if any axis var
+  // isn't in the registry.
+  struct PairResolved {
+    Var2DPair pair;
+    VarDef    x_vd;
+    VarDef    y_vd;
+  };
+  std::vector<PairResolved> resolved;
+  for (auto const &p : pairs) {
+    auto it_x = g_vars_registry.find(p.x_var);
+    auto it_y = g_vars_registry.find(p.y_var);
+    if (it_x == g_vars_registry.end() || it_y == g_vars_registry.end()) {
+      std::cerr << "[ERROR]: 2D pair '" << p.key << "' references unknown var ("
+                << p.x_var << " or " << p.y_var << "). Skipping." << std::endl;
+      continue;
+    }
+    resolved.push_back({p, it_x->second, it_y->second});
+  }
+
+  // Same branch reading as FillFromFlatTree.
+  double xsec = 0;
+  int nu_pdg = 0, tgt_A = 0, tgt_Z = 0;
+  bool is_cc = false, is_qe = false, is_mec = false, is_res = false, is_dis = false;
+  double q0 = 0, Q2 = 0, q3 = 0, w = 0, plep = 0, Enu_true = 0, EAvail_GeV = 0;
+  double Emiss = 0, pmiss = 0;
+  std::vector<double> *fsprotons_KE = nullptr;
+  std::vector<int> *fsi_pdgs = nullptr;
+  tree->SetBranchAddress("xsec",  &xsec);
+  tree->SetBranchAddress("nu_pdg", &nu_pdg);
+  tree->SetBranchAddress("tgt_A",  &tgt_A);
+  tree->SetBranchAddress("tgt_Z",  &tgt_Z);
+  tree->SetBranchAddress("is_cc",  &is_cc);
+  tree->SetBranchAddress("is_qe",  &is_qe);
+  tree->SetBranchAddress("is_mec", &is_mec);
+  tree->SetBranchAddress("is_res", &is_res);
+  tree->SetBranchAddress("is_dis", &is_dis);
+  tree->SetBranchAddress("q0", &q0);
+  tree->SetBranchAddress("Q2", &Q2);
+  tree->SetBranchAddress("q3", &q3);
+  tree->SetBranchAddress("w",  &w);
+  tree->SetBranchAddress("plep",       &plep);
+  tree->SetBranchAddress("Enu_true",   &Enu_true);
+  tree->SetBranchAddress("EAvail_GeV", &EAvail_GeV);
+  bool has_Emiss = tree->GetBranch("Emiss") != nullptr;
+  bool has_pmiss = tree->GetBranch("pmiss") != nullptr;
+  if (has_Emiss) tree->SetBranchAddress("Emiss", &Emiss);
+  if (has_pmiss) tree->SetBranchAddress("pmiss", &pmiss);
+  double Ereco_cal = 0;
+  int nproton = 0, npip = 0, npim = 0, npi0 = 0, nneutron = 0;
+  bool has_Ereco    = tree->GetBranch("Ereco_cal") != nullptr;
+  bool has_nproton  = tree->GetBranch("nproton")   != nullptr;
+  bool has_npip     = tree->GetBranch("npip")      != nullptr;
+  bool has_npim     = tree->GetBranch("npim")      != nullptr;
+  bool has_npi0     = tree->GetBranch("npi0")      != nullptr;
+  bool has_nneutron = tree->GetBranch("nneutron")  != nullptr;
+  if (has_Ereco)    tree->SetBranchAddress("Ereco_cal", &Ereco_cal);
+  if (has_nproton)  tree->SetBranchAddress("nproton",   &nproton);
+  if (has_npip)     tree->SetBranchAddress("npip",      &npip);
+  if (has_npim)     tree->SetBranchAddress("npim",      &npim);
+  if (has_npi0)     tree->SetBranchAddress("npi0",      &npi0);
+  if (has_nneutron) tree->SetBranchAddress("nneutron",  &nneutron);
+  bool has_proton_branch = tree->GetBranch("fsprotons_KE") != nullptr;
+  if (has_proton_branch) tree->SetBranchAddress("fsprotons_KE", &fsprotons_KE);
+  double leading_proton_p = -999;
+  bool has_leading_proton_p = tree->GetBranch("leading_proton_p") != nullptr;
+  if (has_leading_proton_p)
+    tree->SetBranchAddress("leading_proton_p", &leading_proton_p);
+  double Bjorken_x = -999, plep_L = -999, plep_T = -999;
+  bool has_x  = tree->GetBranch("Bjorken_x") != nullptr;
+  bool has_pL = tree->GetBranch("plep_L")    != nullptr;
+  bool has_pT = tree->GetBranch("plep_T")    != nullptr;
+  if (has_x)  tree->SetBranchAddress("Bjorken_x", &Bjorken_x);
+  if (has_pL) tree->SetBranchAddress("plep_L",    &plep_L);
+  if (has_pT) tree->SetBranchAddress("plep_T",    &plep_T);
+  // Per-particle 4-vectors for fallback computation of x/pL/pT when the
+  // dedicated scalar branches are absent (older flat trees).
+  std::vector<int>    *is_pdg = nullptr, *fs_pdg = nullptr;
+  std::vector<double> *is_px = nullptr, *is_py = nullptr, *is_pz = nullptr;
+  std::vector<double> *fs_px = nullptr, *fs_py = nullptr, *fs_pz = nullptr;
+  if (tree->GetBranch("isparticles_pdg")) tree->SetBranchAddress("isparticles_pdg", &is_pdg);
+  if (tree->GetBranch("isparticles_px"))  tree->SetBranchAddress("isparticles_px",  &is_px);
+  if (tree->GetBranch("isparticles_py"))  tree->SetBranchAddress("isparticles_py",  &is_py);
+  if (tree->GetBranch("isparticles_pz"))  tree->SetBranchAddress("isparticles_pz",  &is_pz);
+  if (tree->GetBranch("fsparticles_pdg")) tree->SetBranchAddress("fsparticles_pdg", &fs_pdg);
+  if (tree->GetBranch("fsparticles_px"))  tree->SetBranchAddress("fsparticles_px",  &fs_px);
+  if (tree->GetBranch("fsparticles_py"))  tree->SetBranchAddress("fsparticles_py",  &fs_py);
+  if (tree->GetBranch("fsparticles_pz"))  tree->SetBranchAddress("fsparticles_pz",  &fs_pz);
+  bool has_fsi_pdgs = tree->GetBranch("fsi_pdgs") != nullptr;
+  if (has_fsi_pdgs) tree->SetBranchAddress("fsi_pdgs", &fsi_pdgs);
+
+  // Per-dial tweak response branch setup (same as 1D path).
+  struct PBranch {
+    std::string fullname;
+    int ntweaks;
+    std::vector<double> responses;
+    double cv_weight;
+    std::vector<std::string> applies_patterns;
+  };
+  std::vector<PBranch> pbranches;
+  for (auto &pm : params) {
+    PBranch pb;
+    pb.fullname = pm.fullname;
+    pb.ntweaks = pm.ntweaks;
+    pb.responses.resize(pm.ntweaks, 1.0);
+    pb.cv_weight = 1.0;
+    if (tree->GetBranch(("tweak_responses_" + pm.fullname).c_str()))
+      tree->SetBranchAddress(("tweak_responses_" + pm.fullname).c_str(),
+                              pb.responses.data());
+    if (tree->GetBranch(("paramCVWeight_" + pm.fullname).c_str()))
+      tree->SetBranchAddress(("paramCVWeight_" + pm.fullname).c_str(),
+                              &pb.cv_weight);
+    if (auto *pats = FindAppliesPatternsForFullname(applies_to_channels, pm.fullname))
+      pb.applies_patterns = *pats;
+    pbranches.push_back(std::move(pb));
+  }
+
+  Long64_t nentries = tree->GetEntries();
+  if (cliopts::NMax < (size_t)nentries) nentries = (Long64_t)cliopts::NMax;
+  Long64_t nshout = std::max(nentries / 20, (Long64_t)1);
+
+  for (Long64_t ev = 0; ev < nentries; ++ev) {
+    if (ev % nshout == 0)
+      std::cout << "\rProcessing event " << ev << "/" << nentries << std::flush;
+    tree->GetEntry(ev);
+
+    EventVars evars;
+    evars.Enu = Enu_true; evars.q0 = q0; evars.Q2 = Q2; evars.q3 = q3;
+    evars.w = w; evars.plep = plep; evars.EAvail = EAvail_GeV; evars.xsec = xsec;
+    evars.is_cc = is_cc; evars.is_qe = is_qe; evars.is_mec = is_mec;
+    evars.is_res = is_res; evars.is_dis = is_dis;
+    evars.nu_pdg = nu_pdg; evars.tgt_A = tgt_A; evars.tgt_Z = tgt_Z;
+    evars.has_coslep = false; evars.coslep = -999;
+    evars.has_leading_proton = has_proton_branch && fsprotons_KE && !fsprotons_KE->empty();
+    evars.leading_proton_KE = evars.has_leading_proton ? (*fsprotons_KE)[0] : -999;
+    evars.Emiss = has_Emiss ? Emiss : -999;
+    evars.pmiss = has_pmiss ? pmiss : -999;
+    evars.Ereco_cal = has_Ereco ? Ereco_cal : -999;
+    evars.leading_proton_p = has_leading_proton_p ? leading_proton_p : -999;
+    evars.Bjorken_x = has_x  ? Bjorken_x : -999;
+    evars.plep_L    = has_pL ? plep_L    : -999;
+    evars.plep_T    = has_pT ? plep_T    : -999;
+    ApplyDerivedFallbacks(evars, has_x, has_pL, has_pT,
+                          is_pdg, is_px, is_py, is_pz,
+                          fs_pdg, fs_px, fs_py, fs_pz);
+    evars.nproton  = has_nproton  ? nproton  : 0;
+    evars.npip     = has_npip     ? npip     : 0;
+    evars.npim     = has_npim     ? npim     : 0;
+    evars.npi0     = has_npi0     ? npi0     : 0;
+    evars.nneutron = has_nneutron ? nneutron : 0;
+
+    counts.Count(evars);
+    std::string chkey = MakeChannelKey(evars);
+
+    for (size_t ip = 0; ip < pbranches.size(); ++ip) {
+      auto &pb = pbranches[ip];
+      auto &pm = params[ip];
+      if (!pb.applies_patterns.empty() &&
+          !nusyst::channel::MatchesAny(chkey, pb.applies_patterns))
+        continue;
+
+      // Lazy-book TH2Ds for this (channel, dial) on first encounter.
+      if (allhists2d[chkey].find(pm.fullname) == allhists2d[chkey].end()) {
+        auto &pair_map = allhists2d[chkey][pm.fullname];
+        for (auto const &pr : resolved) {
+          std::string tag = chkey + "_" + pm.fullname + "_" + pr.pair.key;
+          int xn = pr.x_vd.nbins > 0 ? pr.x_vd.nbins : cliopts::nbins;
+          int yn = pr.y_vd.nbins > 0 ? pr.y_vd.nbins : cliopts::nbins;
+          double xlo = pr.x_vd.xmin, xhi = pr.x_vd.xmax;
+          double ylo = pr.y_vd.xmin, yhi = pr.y_vd.xmax;
+          if (xlo == 0 && xhi == 0) { xlo = 0; xhi = 5; }
+          if (ylo == 0 && yhi == 0) { ylo = 0; yhi = 5; }
+          Syst2DHists sh;
+          sh.tweakvals = pm.tweakvalues;
+          sh.h_cv = new TH2D(("h2_cv_" + tag).c_str(), "",
+                              xn, xlo, xhi, yn, ylo, yhi);
+          sh.h_cv->Sumw2();
+          for (int i = 0; i < pm.ntweaks; ++i) {
+            TH2D *hv = new TH2D(Form("h2_var%d_%s", i, tag.c_str()), "",
+                                xn, xlo, xhi, yn, ylo, yhi);
+            hv->Sumw2();
+            sh.h_var.push_back(hv);
+          }
+          pair_map[pr.pair.key] = sh;
+        }
+      }
+
+      auto &pair_map = allhists2d[chkey][pm.fullname];
+      for (auto const &pr : resolved) {
+        double x = GetVarValue(evars, pr.x_vd.branch);
+        double y = GetVarValue(evars, pr.y_vd.branch);
+        if (x <= -999 || y <= -999) continue;
+        auto pit = pair_map.find(pr.pair.key);
+        if (pit == pair_map.end()) continue;
+        auto &sh = pit->second;
+        sh.h_cv->Fill(x, y, xsec * pb.cv_weight);
+        for (int i = 0; i < pb.ntweaks && i < (int)sh.h_var.size(); ++i)
+          sh.h_var[i]->Fill(x, y, xsec * pb.cv_weight * pb.responses[i]);
+      }
+    }
+  }
+  std::cout << "\rProcessed " << nentries << " events (2D).          " << std::endl;
   tree->ResetBranchAddresses();
 }
 
@@ -1466,6 +1735,288 @@ void MakeSummaryPage(TCanvas *c, const EventCounts &counts) {
   }
 }
 
+// gStyle->SetPalette is GLOBAL, looked up by COLZ at canvas-print time —
+// not at hist->Draw() time. For pages with multiple pads using different
+// palettes, all pads end up using the LAST palette set unless we ship a
+// per-pad TExec that re-sets the palette as the pad is rendered. The
+// strings below are Cling-evaluated by TExec at that moment.
+//
+// TExec command strings (Cling-evaluated at pad render time). Initially try
+// custom gradient tables; if those don't switch correctly per-pad on this
+// ROOT build, fall back to stock palettes that Cling definitely knows.
+inline const char *kPaletteBWRCmd =
+  "double s[7]={0.00,0.17,0.33,0.50,0.67,0.83,1.00};"
+  "double r[7]={0.129,0.263,0.573,0.969,0.957,0.839,0.698};"
+  "double g[7]={0.400,0.576,0.773,0.969,0.647,0.376,0.094};"
+  "double b[7]={0.674,0.764,0.871,0.969,0.510,0.302,0.169};"
+  "TColor::CreateGradientColorTable(7,s,r,g,b,255);";
+
+inline const char *kPaletteMagmaCmd =
+  "double s[6]={0.00,0.20,0.40,0.60,0.80,1.00};"
+  "double r[6]={0.001,0.234,0.550,0.866,0.987,0.987};"
+  "double g[6]={0.000,0.060,0.149,0.219,0.471,0.991};"
+  "double b[6]={0.014,0.402,0.506,0.420,0.299,0.750};"
+  "TColor::CreateGradientColorTable(6,s,r,g,b,255);";
+
+// Sequential single-hue (very light -> deep navy blue) for the CV panel.
+// White-on-blue intensity scale; no second color, no hue rotation.
+inline const char *kPaletteBlueSequentialCmd =
+  "double s[5]={0.00,0.25,0.50,0.75,1.00};"
+  "double r[5]={0.969,0.776,0.486,0.192,0.031};"
+  "double g[5]={0.984,0.859,0.722,0.510,0.188};"
+  "double b[5]={1.000,0.937,0.847,0.741,0.420};"
+  "TColor::CreateGradientColorTable(5,s,r,g,b,255);";
+
+// Compile-time helpers used outside TExec (e.g. one-time init in main).
+inline void UseBlueWhiteRedPalette() {
+  static Double_t stops[7]  = {0.00, 0.17, 0.33, 0.50, 0.67, 0.83, 1.00};
+  static Double_t reds[7]   = {0.129, 0.263, 0.573, 0.969, 0.957, 0.839, 0.698};
+  static Double_t greens[7] = {0.400, 0.576, 0.773, 0.969, 0.647, 0.376, 0.094};
+  static Double_t blues[7]  = {0.674, 0.764, 0.871, 0.969, 0.510, 0.302, 0.169};
+  TColor::CreateGradientColorTable(7, stops, reds, greens, blues, 255);
+}
+inline void UseMagmaPalette() {
+  static Double_t stops[6]  = {0.00, 0.20, 0.40, 0.60, 0.80, 1.00};
+  static Double_t reds[6]   = {0.001, 0.234, 0.550, 0.866, 0.987, 0.987};
+  static Double_t greens[6] = {0.000, 0.060, 0.149, 0.219, 0.471, 0.991};
+  static Double_t blues[6]  = {0.014, 0.402, 0.506, 0.420, 0.299, 0.750};
+  TColor::CreateGradientColorTable(6, stops, reds, greens, blues, 255);
+}
+
+// Pick the index in `tweakvals` closest to `target` (e.g. +1 or -1).
+// Returns -1 if the vector is empty.
+inline int IndexClosestTo(const std::vector<double> &tweakvals, double target) {
+  if (tweakvals.empty()) return -1;
+  int best = 0;
+  double best_d = std::abs(tweakvals[0] - target);
+  for (int i = 1; i < (int)tweakvals.size(); ++i) {
+    double d = std::abs(tweakvals[i] - target);
+    if (d < best_d) { best_d = d; best = i; }
+  }
+  return best;
+}
+
+// ===== PDF plotting -- 2D mode =============================================
+// Per (channel, dial): pairs are emitted two per page, each row is
+//   [ (var_-1sigma - CV)/CV  |  CV 2D  |  (var_+1sigma - CV)/CV ]
+// drawn with a diverging palette centered at 0 for the ratio panels and
+// the default palette for the CV. Snaps to the nearest tweakval if exact
+// +-1 sigma is not available.
+void Make2DPlots(const Hist2DMap &allhists2d,
+                 const std::vector<Var2DPair> &pairs,
+                 size_t n_events_processed) {
+  std::string pdfname = cliopts::output_base + ".pdf";
+  TCanvas *c = new TCanvas("c2dplots", "", 1400, 1000);
+  // Suppress the default ROOT stat box on every histogram drawn from here
+  // on. It otherwise sits over the upper-right corner and obscures the
+  // y-axis labels in tight panels.
+  gStyle->SetOptStat(0);
+
+  // Same channel ordering helper as 1D.
+  auto channel_priority = [](const std::string &s) -> std::string {
+    if (s == "Total") return "000";
+    if (s == "Total_CC") return "001";
+    if (s == "Total_NC") return "002";
+    return "100_" + s;
+  };
+  std::vector<std::string> channels;
+  for (auto &[ch, _] : allhists2d) channels.push_back(ch);
+  std::sort(channels.begin(), channels.end(),
+            [&](const std::string &a, const std::string &b) {
+              return channel_priority(a) < channel_priority(b);
+            });
+
+  c->Print((pdfname + "[").c_str());
+
+  // Resolve x and y VarDefs for each pair (registry lookup) to build axis
+  // titles in the rendering loop.
+  auto resolve_pair_vds = [](Var2DPair const &p, VarDef &x_vd, VarDef &y_vd) {
+    auto ix = g_vars_registry.find(p.x_var);
+    auto iy = g_vars_registry.find(p.y_var);
+    if (ix == g_vars_registry.end() || iy == g_vars_registry.end()) return false;
+    x_vd = ix->second; y_vd = iy->second; return true;
+  };
+
+  double inv_n = n_events_processed > 0 ? 1.0 / double(n_events_processed) : 1.0;
+  const int per_page = 2;  // pairs per page (2 rows of 3 panels)
+
+  for (auto &ch : channels) {
+    auto pit_ch = allhists2d.find(ch);
+    if (pit_ch == allhists2d.end()) continue;
+    for (auto &[parname, pair_map] : pit_ch->second) {
+      int n_pairs = (int)pairs.size();
+      int n_pages = (n_pairs + per_page - 1) / per_page;
+      for (int ipage = 0; ipage < n_pages; ++ipage) {
+        int pair_start = ipage * per_page;
+        int pair_end   = std::min(pair_start + per_page, n_pairs);
+        int nrows = pair_end - pair_start;
+
+        c->Clear();
+        c->cd();
+
+        TPad *titlepad = new TPad(Form("tp2_%d", ipage), "", 0, 0.93, 1, 1.0);
+        titlepad->SetFillColor(kWhite);
+        titlepad->Draw(); titlepad->cd();
+        TLatex title; title.SetNDC();
+        title.SetTextSize(0.42); title.SetTextAlign(22); title.SetTextFont(62);
+        std::string page_title = parname + "  |  " + MakeChannelLabel(ch);
+        if (n_pages > 1) page_title += Form("  (%d/%d)", ipage + 1, n_pages);
+        title.DrawLatex(0.5, 0.45, page_title.c_str());
+
+        c->cd();
+        double grid_top = 0.92, grid_bot = 0.04;
+        double row_h = (grid_top - grid_bot) / per_page;
+        // ncols hardcoded to 3 (sigma- | CV | sigma+)
+        double col_w[3] = {1.0/3, 1.0/3, 1.0/3};
+
+        for (int ip = pair_start; ip < pair_end; ++ip) {
+          int row = ip - pair_start;
+          double y_top = grid_top - row * row_h;
+          double y_bot = y_top - row_h;
+          // Leave small inner margin between top of pad and ceiling
+          double pad_top = y_top - 0.005, pad_bot = y_bot + 0.005;
+
+          auto const &pr = pairs[ip];
+          auto sh_it = pair_map.find(pr.key);
+          if (sh_it == pair_map.end()) continue;
+          auto const &sh = sh_it->second;
+          if (!sh.h_cv) continue;
+
+          VarDef x_vd, y_vd;
+          if (!resolve_pair_vds(pr, x_vd, y_vd)) continue;
+
+          // Find indices closest to -1 and +1 sigma.
+          int im = IndexClosestTo(sh.tweakvals, -1.0);
+          int ip_sig = IndexClosestTo(sh.tweakvals, +1.0);
+          double tw_m = (im >= 0 && im < (int)sh.tweakvals.size()) ? sh.tweakvals[im] : -1;
+          double tw_p = (ip_sig >= 0 && ip_sig < (int)sh.tweakvals.size())
+                          ? sh.tweakvals[ip_sig] : +1;
+
+          // ---- left panel: -sigma ratio --------------------------------------
+          double x1 = 0.0, x2 = col_w[0];
+          c->cd();
+          TPad *pL = new TPad(Form("p2L_%d_%d", ipage, row), "",
+                              x1, pad_bot, x2, pad_top);
+          pL->SetTopMargin(0.10); pL->SetBottomMargin(0.18);
+          pL->SetLeftMargin(0.17); pL->SetRightMargin(0.16);
+          pL->Draw(); pL->cd();
+          if (im >= 0 && im < (int)sh.h_var.size() && sh.h_var[im]) {
+            TH2D *rL = (TH2D*)sh.h_var[im]->Clone(Form("rL_%d_%d", ipage, row));
+            rL->Add(sh.h_cv, -1.0);
+            rL->Divide(sh.h_cv);
+            // Zero bins where either:
+            //   - the CV denominator has no events (the ratio is meaningless;
+            //     TH2::Divide can leak a coloured speckle on empty regions),
+            //   - the CV is below `ratio_min_cv_count` (low-stats noise),
+            //   - the ratio itself is non-finite (NaN / Inf safety net).
+            // Setting content & error to 0 maps the bin to z=0 = palette
+            // midpoint = pure white on the diverging palette.
+            for (int bx = 1; bx <= rL->GetNbinsX(); ++bx) {
+              for (int by = 1; by <= rL->GetNbinsY(); ++by) {
+                double _cv = sh.h_cv->GetBinContent(bx, by);
+                double _r  = rL->GetBinContent(bx, by);
+                if (_cv <= 0 || _cv < cliopts::ratio_min_cv_count ||
+                    !std::isfinite(_r)) {
+                  rL->SetBinContent(bx, by, 0);
+                  rL->SetBinError(bx, by, 0);
+                }
+              }
+            }
+            double zmax = std::max(std::abs(rL->GetMinimum()),
+                                   std::abs(rL->GetMaximum()));
+            if (zmax > 1e-9) { rL->SetMinimum(-zmax); rL->SetMaximum(+zmax); }
+            rL->SetTitle(Form("(%.2f#sigma - CV)/CV", tw_m));
+            rL->GetXaxis()->SetTitle(BuildXAxisTitle(x_vd).c_str());
+            rL->GetYaxis()->SetTitle(BuildXAxisTitle(y_vd).c_str());
+            rL->GetXaxis()->SetTitleSize(0.06); rL->GetYaxis()->SetTitleSize(0.06);
+            rL->GetXaxis()->SetLabelSize(0.05); rL->GetYaxis()->SetLabelSize(0.05);
+            rL->GetXaxis()->SetTitleOffset(1.1); rL->GetYaxis()->SetTitleOffset(1.2);
+            // gStyle->SetPalette is GLOBAL — ROOT looks up the palette at
+            // canvas-print time, so without per-pad TExec hooks all 3 pads
+            // would end up using the LAST palette set (the right panel's
+            // BWR, in this case). TExec runs an arbitrary command at the
+            // moment the pad renders, so we can pin a different palette per
+            // pad.
+            UseBlueWhiteRedPalette();
+            rL->Draw("COLZ");
+          }
+
+          // ---- middle panel: CV 2D ------------------------------------------
+          x1 = col_w[0]; x2 = col_w[0] + col_w[1];
+          c->cd();
+          TPad *pM = new TPad(Form("p2M_%d_%d", ipage, row), "",
+                              x1, pad_bot, x2, pad_top);
+          pM->SetTopMargin(0.10); pM->SetBottomMargin(0.18);
+          pM->SetLeftMargin(0.17); pM->SetRightMargin(0.16);
+          pM->Draw(); pM->cd();
+          TH2D *cv_scaled = (TH2D*)sh.h_cv->Clone(Form("cv_%d_%d", ipage, row));
+          // Match the 1D ScaleToDiffXsec convention: divide by N_events and
+          // by bin area (Scale "width" handles both x and y widths).
+          cv_scaled->Scale(inv_n, "width");
+          cv_scaled->SetTitle("CV");
+          cv_scaled->GetXaxis()->SetTitle(BuildXAxisTitle(x_vd).c_str());
+          cv_scaled->GetYaxis()->SetTitle(BuildXAxisTitle(y_vd).c_str());
+          cv_scaled->GetXaxis()->SetTitleSize(0.06);
+          cv_scaled->GetYaxis()->SetTitleSize(0.06);
+          cv_scaled->GetXaxis()->SetLabelSize(0.05);
+          cv_scaled->GetYaxis()->SetLabelSize(0.05);
+          cv_scaled->GetXaxis()->SetTitleOffset(1.1);
+          cv_scaled->GetYaxis()->SetTitleOffset(1.2);
+          // All three panels share the BWR palette: ROOT's multi-palette
+          // TExec pattern doesn't pin per-pad palettes on this build, so
+          // any second palette set later (e.g. for the right panel) would
+          // overwrite the middle panel's at canvas-print time.
+          UseBlueWhiteRedPalette();
+          cv_scaled->Draw("COLZ");
+
+          // ---- right panel: +sigma ratio ------------------------------------
+          x1 = col_w[0] + col_w[1]; x2 = 1.0;
+          c->cd();
+          TPad *pR = new TPad(Form("p2R_%d_%d", ipage, row), "",
+                              x1, pad_bot, x2, pad_top);
+          pR->SetTopMargin(0.10); pR->SetBottomMargin(0.18);
+          pR->SetLeftMargin(0.17); pR->SetRightMargin(0.16);
+          pR->Draw(); pR->cd();
+          if (ip_sig >= 0 && ip_sig < (int)sh.h_var.size() && sh.h_var[ip_sig]) {
+            TH2D *rR = (TH2D*)sh.h_var[ip_sig]->Clone(Form("rR_%d_%d", ipage, row));
+            rR->Add(sh.h_cv, -1.0);
+            rR->Divide(sh.h_cv);
+            // See the left-panel block above for rationale.
+            for (int bx = 1; bx <= rR->GetNbinsX(); ++bx) {
+              for (int by = 1; by <= rR->GetNbinsY(); ++by) {
+                double _cv = sh.h_cv->GetBinContent(bx, by);
+                double _r  = rR->GetBinContent(bx, by);
+                if (_cv <= 0 || _cv < cliopts::ratio_min_cv_count ||
+                    !std::isfinite(_r)) {
+                  rR->SetBinContent(bx, by, 0);
+                  rR->SetBinError(bx, by, 0);
+                }
+              }
+            }
+            double zmax = std::max(std::abs(rR->GetMinimum()),
+                                   std::abs(rR->GetMaximum()));
+            if (zmax > 1e-9) { rR->SetMinimum(-zmax); rR->SetMaximum(+zmax); }
+            rR->SetTitle(Form("(+%.2f#sigma - CV)/CV", tw_p));
+            rR->GetXaxis()->SetTitle(BuildXAxisTitle(x_vd).c_str());
+            rR->GetYaxis()->SetTitle(BuildXAxisTitle(y_vd).c_str());
+            rR->GetXaxis()->SetTitleSize(0.06); rR->GetYaxis()->SetTitleSize(0.06);
+            rR->GetXaxis()->SetLabelSize(0.05); rR->GetYaxis()->SetLabelSize(0.05);
+            rR->GetXaxis()->SetTitleOffset(1.1); rR->GetYaxis()->SetTitleOffset(1.2);
+            UseBlueWhiteRedPalette();
+            rR->Draw("COLZ");
+          }
+        }
+
+        c->Print(pdfname.c_str());
+      }
+    }
+  }
+
+  c->Print((pdfname + "]").c_str());
+  delete c;
+  std::cout << "PDF written to " << pdfname << std::endl;
+}
+
 // ===== PDF plotting (appends pages to already-open PDF) ====================
 void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
   std::string pdfname = cliopts::output_base + ".pdf";
@@ -1856,10 +2407,15 @@ int main(int argc, char const *argv[]) {
       meta_tree->ResetBranchAddresses();
     }
 
-    // Filter variables to those with existing branches (skip coslep etc.).
+    // Filter variables to those with existing branches (skip coslep etc.)
     // Formula-backed vars skip this check -- they compose other branches via
     // TTreeFormula and don't have a single backing branch to test for.
+    // 2D mode doesn't render 1D `vars`; skip the filter (and its warnings)
+    // entirely.
     std::vector<VarDef> valid_vars;
+    if (cliopts::dim == 2) {
+      valid_vars = vars;
+    } else
     for (auto &vd : vars) {
       if (!vd.formula.empty()) {
         valid_vars.push_back(vd);
@@ -1881,10 +2437,29 @@ int main(int argc, char const *argv[]) {
     }
     vars = valid_vars;
 
+    if (cliopts::dim == 2) {
+      Hist2DMap allhists2d;
+      FillFromFlatTree2D(flat_tree, meta_tree, kPredefined2DPairs, params,
+                         applies_to_channels, allhists2d, counts);
+      if (allhists2d.empty()) {
+        std::cout << "[ERROR]: No 2D histograms were filled." << std::endl;
+        return 4;
+      }
+      Make2DPlots(allhists2d, kPredefined2DPairs, counts.total);
+      return 0;  // 2D path bypasses the remaining 1D rendering pipeline.
+    }
     FillFromFlatTree(flat_tree, meta_tree, vars, params, applies_to_channels,
                      allhists, counts);
   } else {
     std::cout << "Detected GHEP mode." << std::endl;
+    if (cliopts::dim == 2) {
+      std::cout << "[ERROR]: --dim 2 requires a flat-tree input (the output\n"
+                   "         of `nusyst tweaks`). Run that first:\n"
+                   "           nusyst tweaks -p <dial> -i events.ghep.root "
+                   "-o tweaks.root\n"
+                   "         then pass tweaks.root as -i here." << std::endl;
+      return 5;
+    }
     // Formula vars need a TTree backing them; warn once and let the per-event
     // loop silently skip them.
     std::vector<std::string> dropped;
