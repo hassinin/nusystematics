@@ -128,6 +128,93 @@ std::string FmtDouble(double v, int width = 8) {
   return ss.str();
 }
 
+// GenerateAllDialsConfigNuSyst writes a `_scan_report` sub-table inside
+// generated_systematic_provider_configuration capturing which tool-config
+// fhicls failed / were skipped, and which registered tool_types had no
+// fhicl on disk at all. Surface it here so a user looking at the inventory
+// can tell at a glance "this is everything I can see, this is what isn't
+// showing up, this is why."
+void PrintScanReportFooter(const fhicl::ParameterSet &gen) {
+  fhicl::ParameterSet report;
+  try {
+    report = gen.get<fhicl::ParameterSet>("_scan_report");
+  } catch (std::exception const &) {
+    return; // older / hand-rolled fhicl without a report
+  }
+
+  auto failed_n   = report.get<std::vector<std::string>>("failed_names", {});
+  auto failed_r   = report.get<std::vector<std::string>>("failed_reasons", {});
+  auto sk_data_n  = report.get<std::vector<std::string>>("skipped_data_names", {});
+  auto sk_data_r  = report.get<std::vector<std::string>>("skipped_data_reasons", {});
+  auto sk_bug_n   = report.get<std::vector<std::string>>("skipped_bug_names", {});
+  auto sk_bug_r   = report.get<std::vector<std::string>>("skipped_bug_reasons", {});
+  auto sk_other_n = report.get<std::vector<std::string>>("skipped_other_names", {});
+  auto sk_other_r = report.get<std::vector<std::string>>("skipped_other_reasons", {});
+  auto no_fcl     = report.get<std::vector<std::string>>("registered_no_fcl", {});
+  auto grw_n      = report.get<std::vector<std::string>>("genie_rw_skipped_names", {});
+  auto grw_r      = report.get<std::vector<std::string>>("genie_rw_skipped_reasons", {});
+  auto fcl_dir    = report.get<std::string>("fcl_dir", "");
+
+  if (failed_n.empty() && sk_data_n.empty() && sk_bug_n.empty() &&
+      sk_other_n.empty() && no_fcl.empty() && grw_n.empty()) return;
+
+  auto print_paired = [](const char *title,
+                         const std::vector<std::string> &names,
+                         const std::vector<std::string> &reasons) {
+    std::cout << "\n" << title << " (" << names.size() << "):\n";
+    for (size_t i = 0; i < names.size(); ++i) {
+      std::cout << "  " << names[i] << "\n";
+      if (i < reasons.size() && !reasons[i].empty())
+        std::cout << "      " << reasons[i] << "\n";
+    }
+  };
+
+  std::cout << "\n=== Scan report ===\n";
+  if (!fcl_dir.empty())
+    std::cout << "Scanned: " << fcl_dir << " (recursive)\n";
+
+  if (!no_fcl.empty()) {
+    std::cout << "\nRegistered providers with no tool-config fhicl ("
+              << no_fcl.size() << "):\n";
+    for (auto const &t : no_fcl)
+      std::cout << "  " << t << "\n";
+    std::cout << "  -> add a fcl/<name>.ToolConfig.fcl (and an entry in "
+                 "fcl/CMakeLists.txt) to surface these in the inventory.\n";
+  }
+  if (!failed_n.empty())
+    print_paired("Tool configs that failed to load", failed_n, failed_r);
+  if (!sk_data_n.empty()) {
+    print_paired("Tool configs skipped - missing external data file",
+                 sk_data_n, sk_data_r);
+    std::cout << "  -> stage the data file referenced above and re-run with "
+                 "--refresh.\n";
+  }
+  if (!sk_bug_n.empty()) {
+    print_paired("Tool configs skipped - known upstream bug",
+                 sk_bug_n, sk_bug_r);
+    std::cout << "  -> these providers' tool configs are fine; the failure is\n"
+                 "     in shared upstream code (likely a single null-string\n"
+                 "     construction). One fix will unblock all of them. See\n"
+                 "     project_basicstring_null_bug memory entry.\n";
+  }
+  if (!sk_other_n.empty())
+    print_paired("Tool configs skipped - other reasons",
+                 sk_other_n, sk_other_r);
+
+  if (!grw_n.empty()) {
+    print_paired("Inactive GENIE Reweight dials (filtered by default config)",
+                 grw_n, grw_r);
+    std::cout << "  -> these dials exist in GENIE Reweight but are dropped\n"
+                 "     from the kitchen-sink config. The filter logic lives in\n"
+                 "     GenerateAllDialsConfigNuSyst.cxx, DialInactiveReason().\n"
+                 "     To re-enable any of them, write a hand-rolled tool config\n"
+                 "     that names the dial explicitly and feed it to nusyst config\n"
+                 "     directly, bypassing the kitchen-sink filter.\n";
+  }
+
+  std::cout << std::endl;
+}
+
 std::string FmtVariations(const std::vector<double> &vars) {
   if (vars.empty()) return "(none)";
   std::ostringstream ss;
@@ -289,8 +376,27 @@ int main(int argc, char const *argv[]) {
   std::sort(rows.begin(), rows.end(),
             [](Row const &a, Row const &b) { return a.pid < b.pid; });
 
+  // Footer behaviour:
+  //   - full inventory (no --mode):  print the categorised scan report
+  //     covering missing-fhicl / failed / skipped / inactive-GRW etc.
+  //   - filtered view (--mode set):  the report covers the whole config,
+  //     not just the filtered bucket, so showing it would be misleading
+  //     about what the user just listed. Replace it with a one-line
+  //     pointer back to the unfiltered command.
+  auto print_footer = [&]() {
+    if (cliopts::mode.empty()) {
+      PrintScanReportFooter(gen);
+    } else {
+      std::cout << "\n[NOTE]: This is a subset of the available dials. "
+                   "Skipped or failed dials are not shown.\n"
+                   "        To see the full list, run `nusyst inventory` "
+                   "without --mode.\n";
+    }
+  };
+
   if (rows.empty()) {
     std::cout << "[INFO]: No dials matched the selection." << std::endl;
+    print_footer();
     return 0;
   }
 
@@ -359,5 +465,6 @@ int main(int argc, char const *argv[]) {
   }
 
   std::cout << std::endl;
+  print_footer();
   return 0;
 }

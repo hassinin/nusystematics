@@ -31,8 +31,8 @@
 #include "Framework/Utils/XSecSplineList.h"
 
 #include <algorithm>
-#include <dirent.h>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -370,21 +370,24 @@ std::vector<std::string> ChannelPatternsForBucket(const std::string &bucket) {
 // kitchen-sink layout).
 std::map<std::string, fhicl::ParameterSet>
 BuildGENIEReWeightToolConfigs(std::vector<std::string> &included_dials,
-                              std::vector<std::string> &skipped_dials) {
+                              std::vector<std::string> &skipped_names,
+                              std::vector<std::string> &skipped_reasons) {
   std::map<std::string, fhicl::ParameterSet> out;
 
   // Build a flat list of (dial_name, bucket) for the dials we keep.
   std::vector<std::pair<std::string, std::string>> dials;
+  int n_invalid_gaps = 0;
   for (int i = static_cast<int>(genie::rew::kNullSystematic) + 1;
        i < static_cast<int>(genie::rew::kNTwkDials); ++i) {
     genie::rew::GSyst_t s = static_cast<genie::rew::GSyst_t>(i);
     std::string name = genie::rew::GSyst::AsString(s);
     if (!IsValidGENIEDialName(name)) {
-      skipped_dials.push_back(name + " (invalid name)");
+      ++n_invalid_gaps;  // collapsed into a single summary row below
       continue;
     }
     if (auto reason = DialInactiveReason(name); !reason.empty()) {
-      skipped_dials.push_back(name + " (" + reason + ")");
+      skipped_names.push_back(name);
+      skipped_reasons.push_back(reason);
       continue;
     }
     std::string bucket = cliopts::single_instance ? "All" : BucketForDial(name);
@@ -412,6 +415,14 @@ BuildGENIEReWeightToolConfigs(std::vector<std::string> &included_dials,
                                   cliopts::variation_descriptor);
   }
 
+  // Surface the count of invalid GSyst_t enum gaps as a single summary row
+  // instead of one row per gap (typically 2-3 unused slots; not actionable).
+  if (n_invalid_gaps > 0) {
+    skipped_names.push_back("(unused GSyst_t enum gaps)");
+    skipped_reasons.push_back(std::to_string(n_invalid_gaps) +
+                              " enum slots with no dial name");
+  }
+
   return out;
 }
 
@@ -426,19 +437,41 @@ bool IsToolConfigFile(const std::string &path) {
   }
 }
 
-// List *.fcl files in a directory (non-recursive).
+// Best-effort tool_type extraction from a tool-config fhicl. Walks each
+// provider stanza listed in syst_providers and collects its tool_type
+// string. Returns empty on parse failure (caller falls back gracefully).
+std::vector<std::string> ToolTypesDeclaredIn(const std::string &path) {
+  std::vector<std::string> out;
+  std::unique_ptr<cet::filepath_maker> fm = std::make_unique<cet::filepath_maker>();
+  try {
+    fhicl::ParameterSet ps = fhicl::ParameterSet::make(path, *fm);
+    auto names = ps.get<std::vector<std::string>>("syst_providers",
+                                                    std::vector<std::string>{});
+    for (auto const &n : names) {
+      try {
+        auto prov = ps.get<fhicl::ParameterSet>(n);
+        auto tt = prov.get<std::string>("tool_type", "");
+        if (!tt.empty()) out.push_back(tt);
+      } catch (...) {}
+    }
+  } catch (...) {}
+  return out;
+}
+
+// List *.fcl files in a directory, recursively. Used to discover
+// tool-config files; some live one level down in per-provider subdirs
+// (e.g. CCQETemplateReweight/, MECq0q3InterpWeighting/, QEInterference/).
 std::vector<std::string> ListFcls(const std::string &dir) {
   std::vector<std::string> out;
-  DIR *d = opendir(dir.c_str());
-  if (!d) return out;
-  struct dirent *ent;
-  while ((ent = readdir(d)) != nullptr) {
-    std::string name = ent->d_name;
-    if (name.size() < 5) continue;
-    if (name.substr(name.size() - 4) != ".fcl") continue;
-    out.push_back(dir + "/" + name);
+  std::error_code ec;
+  std::filesystem::recursive_directory_iterator it(dir, ec);
+  if (ec) return out;
+  for (auto const &entry : it) {
+    if (!entry.is_regular_file()) continue;
+    auto const &p = entry.path();
+    if (p.extension() != ".fcl") continue;
+    out.push_back(p.string());
   }
-  closedir(d);
   std::sort(out.begin(), out.end());
   return out;
 }
@@ -479,6 +512,20 @@ bool IsMissingDataFileError(const std::string &err) {
     if (err.find(n) != std::string::npos) return true;
   }
   return false;
+}
+
+// Heuristic: is `err` the known shared upstream bug currently affecting
+// CCQERPA / QEInterference / FSIReweight? All three throw
+// `basic_string: construction from null is not valid` during verify-load
+// because something inside their SetupResponseCalculator chain constructs a
+// std::string from a nullptr. Likely one shared utility fix; investigation
+// tracked in the project_basicstring_null_bug memory entry.
+//
+// We classify it as [SKIP] (known upstream bug) rather than [FAIL] (genuine
+// config problem) so users can tell at a glance that the provider's tool
+// config is fine — the failure is in shared code waiting on a fix.
+bool IsKnownUpstreamBug(const std::string &err) {
+  return err.find("basic_string: construction from null") != std::string::npos;
 }
 
 // Try to instantiate providers from a tool-config fhicl. Returns the
@@ -565,10 +612,18 @@ void EnsureGENIETuneLoaded() {
   if (!current_tune.empty()) return;
   char const *tune_env = std::getenv("GENIE_XSEC_TUNE");
   if (!tune_env || std::string(tune_env).empty()) {
-    std::cerr << "[WARN]: GENIE_XSEC_TUNE not set; CCQE FF detection may "
-                 "report 'unknown' and we'll declare both dipole and "
-                 "z-expansion dials." << std::endl;
-    return;
+    // We tried supporting "no tune set" via a warning + best-effort fallback,
+    // but the very next step (DetectCCQEFFMode constructing a transient
+    // GReWeightNuXSecCCQE) reaches into the empty AlgFactory registry and
+    // SIGSEGVs in genie::Registry::SafeFind. Rather than chase every code
+    // path that might dereference an unloaded tune, refuse to proceed.
+    std::cerr << "[FATAL]: GENIE_XSEC_TUNE is not set in the environment.\n"
+                 "         nusyst config (and the GENIE Reweight engines it\n"
+                 "         constructs) require a built GENIE tune. Export the\n"
+                 "         tune you generated your events with, e.g.\n"
+                 "           export GENIE_XSEC_TUNE=AR23_20i_00_000\n"
+                 "         and re-run." << std::endl;
+    std::exit(2);
   }
   genie::RunOpt *grunopt = genie::RunOpt::Instance();
   grunopt->SetTuneName(tune_env);
@@ -611,6 +666,73 @@ int main(int argc, char const *argv[]) {
   // parameter IDs remain unique across providers in the merged output.
   paramId_t syst_param_id_offset = 0;
 
+  // Capture standalone-scan outcomes so they can be embedded in the output
+  // fhicl as a `_scan_report` table. `nusyst inventory` reads it back and
+  // prints a footer summarising what was looked at but not loaded.
+  //
+  // Each failure category is stored as two parallel string arrays (names +
+  // reasons) rather than as a single "<name>: <reason>" composite. Reason
+  // strings can contain colons, brackets, and other characters that fhicl's
+  // value parser tries to interpret if they appear unquoted in a list, which
+  // would break round-tripping. The pair-of-arrays form avoids that.
+  struct ScanReport {
+    std::string              fcl_dir;
+    std::vector<std::string> failed_names,            failed_reasons;
+    std::vector<std::string> skipped_data_names,      skipped_data_reasons;
+    std::vector<std::string> skipped_bug_names,       skipped_bug_reasons;
+    std::vector<std::string> skipped_other_names,     skipped_other_reasons;
+    std::vector<std::string> registered_no_fcl;       // dispatchable but no fhicl
+    // GENIE Reweight dials we filter out from the kitchen-sink config so they
+    // never appear in the inventory table. Surfaced in the footer so users
+    // know they exist and why they were dropped.
+    std::vector<std::string> genie_rw_skipped_names;
+    std::vector<std::string> genie_rw_skipped_reasons;
+  } scan_report;
+
+  // Sanitize an error / reason message for embedding into the output fhicl as
+  // a string. Two issues to handle:
+  //   1. Newlines would break fhicl's single-line value form.
+  //   2. fhicl's value parser treats `:`, `[`, `]`, `{`, `}`, `,` and quotes
+  //      as syntactic — even inside a string element of a vector<string>,
+  //      `put<vector<string>>` re-validates each entry and fails on those
+  //      characters. So we strip them down to spaces / backticks. The result
+  //      is a readable footer at the cost of punctuation fidelity.
+  auto flatten_err = [](std::string err) {
+    std::string ascii; ascii.reserve(err.size());
+    for (unsigned char c : err) {
+      switch (c) {
+        case '\n': case '\r':
+        case ':':  case '[':  case ']':
+        case '{':  case '}':  case ',':
+          ascii += ' '; break;
+        case '"':  case '\'':
+          ascii += '`'; break;
+        default:
+          if (c < 32 || c > 126) {
+            // Non-ASCII (UTF-8 bytes, em-dashes, etc.) — fhicl's value parser
+            // can choke on these. Replace with a plain hyphen for em-dashes
+            // (E2 80 94) / en-dashes (E2 80 93) / others; the goal is "human
+            // can still read it", not "round-trips bit-for-bit".
+            ascii += '-';
+          } else {
+            ascii += static_cast<char>(c);
+          }
+          break;
+      }
+    }
+    std::string out; out.reserve(ascii.size());
+    bool prev_space = false;
+    for (char c : ascii) {
+      if (c == ' ') {
+        if (!prev_space) out += c;
+        prev_space = true;
+      } else {
+        out += c; prev_space = false;
+      }
+    }
+    return out;
+  };
+
   // ----- GENIE RW mode -----
   if (cliopts::mode == "genierw" || cliopts::mode == "all") {
     std::cerr << "=== GENIE Reweight ===" << std::endl;
@@ -619,17 +741,26 @@ int main(int argc, char const *argv[]) {
               << " (dial set selected accordingly; "
                  "the inactive family is silently ignored by the runtime engine)"
               << std::endl;
-    std::vector<std::string> included, skipped;
-    auto bucket_configs = BuildGENIEReWeightToolConfigs(included, skipped);
-    std::cerr << "Enumerated " << (included.size() + skipped.size())
+    std::vector<std::string> included, skipped_names, skipped_reasons;
+    auto bucket_configs = BuildGENIEReWeightToolConfigs(included, skipped_names,
+                                                        skipped_reasons);
+    std::cerr << "Enumerated " << (included.size() + skipped_names.size())
               << " GSyst_t entries (" << included.size() << " active across "
               << bucket_configs.size() << " "
               << (cliopts::single_instance ? "instance" : "channel buckets")
-              << ", " << skipped.size() << " skipped)" << std::endl;
-    if (!skipped.empty()) {
+              << ", " << skipped_names.size() << " skipped)" << std::endl;
+    if (!skipped_names.empty()) {
       std::cerr << "Skipped GENIE RW dials:" << std::endl;
-      for (auto &s : skipped) std::cerr << "    " << s << std::endl;
+      for (size_t i = 0; i < skipped_names.size(); ++i) {
+        std::cerr << "    " << skipped_names[i]
+                  << " (" << skipped_reasons[i] << ")" << std::endl;
+      }
     }
+    // Persist for `nusyst inventory` footer. Sanitize the reasons through
+    // flatten_err for the same fhicl-roundtrip reasons as the scan report.
+    scan_report.genie_rw_skipped_names = skipped_names;
+    for (auto const &r : skipped_reasons)
+      scan_report.genie_rw_skipped_reasons.push_back(flatten_err(r));
 
     for (auto &[bucket, grw_ps] : bucket_configs) {
       std::string err;
@@ -673,35 +804,48 @@ int main(int argc, char const *argv[]) {
       std::cerr << "[ERROR]: --fcl-dir not set and $NUSYST/fcl unavailable; "
                 << "skipping providers." << std::endl;
     } else {
-      std::cerr << "Scanning " << cliopts::fcl_dir << std::endl;
+      scan_report.fcl_dir = cliopts::fcl_dir;
+      std::cerr << "Scanning " << cliopts::fcl_dir << " (recursive)" << std::endl;
       std::vector<std::string> fcls = ListFcls(cliopts::fcl_dir);
       std::cerr << "Found " << fcls.size() << " .fcl files" << std::endl;
 
       for (auto &path : fcls) {
-        std::string base = path.substr(path.find_last_of('/') + 1);
+        // Use the path relative to fcl_dir so subdirectory layout is visible
+        // in the report (e.g. "QEInterference/QEInterference.ToolConfig.fcl").
+        std::string base = path;
+        if (path.rfind(cliopts::fcl_dir + "/", 0) == 0)
+          base = path.substr(cliopts::fcl_dir.size() + 1);
+        std::string leaf = path.substr(path.find_last_of('/') + 1);
 
         // Skip development-template tool configs unless explicitly included
         if (!cliopts::include_skeleton &&
-            cliopts::kDevelopmentTemplates.count(base)) {
+            cliopts::kDevelopmentTemplates.count(leaf)) {
           std::cerr << "  [SKIP] " << base
                     << " (development template; pass --include-skeleton to "
                        "include it)"
                     << std::endl;
+          scan_report.skipped_other_names.push_back(base);
+          scan_report.skipped_other_reasons.push_back("development template");
           continue;
         }
         // Skip user-specified files
         bool skip = false;
         for (auto &s : cliopts::skip_providers) {
-          if (base == s) { skip = true; break; }
+          if (leaf == s) { skip = true; break; }
         }
         if (skip) {
           std::cerr << "  [SKIP] " << base << " (user --skip)" << std::endl;
+          scan_report.skipped_other_names.push_back(base);
+          scan_report.skipped_other_reasons.push_back("user --skip");
           continue;
         }
 
         // Skip non-toolconfig files (e.g. paramHeader_FSI.fcl is a generated config)
         if (!IsToolConfigFile(path)) {
           std::cerr << "  [SKIP] " << base << " (not a tool config: no syst_providers key)" << std::endl;
+          scan_report.skipped_other_names.push_back(base);
+          scan_report.skipped_other_reasons.push_back(
+              "not a tool config (no syst_providers key)");
           continue;
         }
 
@@ -716,8 +860,18 @@ int main(int argc, char const *argv[]) {
             std::cerr << "  [SKIP] " << base
                       << " (missing external data file — stage data and re-run)\n"
                       << "         " << err << std::endl;
+            scan_report.skipped_data_names.push_back(base);
+            scan_report.skipped_data_reasons.push_back(flatten_err(err));
+          } else if (IsKnownUpstreamBug(err)) {
+            std::cerr << "  [SKIP] " << base
+                      << " (known upstream bug — see project_basicstring_null_bug)\n"
+                      << "         " << err << std::endl;
+            scan_report.skipped_bug_names.push_back(base);
+            scan_report.skipped_bug_reasons.push_back(flatten_err(err));
           } else {
             std::cerr << "  [FAIL] " << base << "\n         " << err << std::endl;
+            scan_report.failed_names.push_back(base);
+            scan_report.failed_reasons.push_back(flatten_err(err));
           }
           continue;
         }
@@ -729,6 +883,33 @@ int main(int argc, char const *argv[]) {
         }
         std::cerr << std::endl;
       }
+    }
+  }
+
+  // ----- Compute "registered but no tool config" -----
+  // The accurate definition we want: a registered tool_type appears in
+  // `registered_no_fcl` iff no `.fcl` we scanned declared it. Providers
+  // whose fhicl was found but failed/skipped are NOT the same thing — they
+  // have a fhicl, it just didn't load — so those tool_types must also be
+  // excluded from this list. Collect tool_types declared by *any* scanned
+  // tool-config (regardless of load outcome), plus those from providers
+  // that loaded successfully, and subtract from the registered set.
+  {
+    std::set<std::string> observed_tt;
+    for (auto &p : all_providers) {
+      try {
+        observed_tt.insert(
+            p->GetParameterHeadersDocument().get<std::string>("tool_type"));
+      } catch (...) {}
+    }
+    if (!cliopts::fcl_dir.empty()) {
+      for (auto const &path : ListFcls(cliopts::fcl_dir)) {
+        for (auto const &tt : ToolTypesDeclaredIn(path)) observed_tt.insert(tt);
+      }
+    }
+    for (auto const &tt : nusyst::RegisteredToolTypes()) {
+      if (!observed_tt.count(tt))
+        scan_report.registered_no_fcl.push_back(tt);
     }
   }
 
@@ -762,6 +943,26 @@ int main(int argc, char const *argv[]) {
     providerNames.push_back(prov->GetFullyQualifiedName());
   }
   out_ps.put("syst_providers", providerNames);
+
+  // Embed the scan report so `nusyst inventory` can surface providers that
+  // were registered in make_instance but had no tool-config fhicl to load,
+  // and those whose fhicl was found but failed/skipped.
+  {
+    fhicl::ParameterSet report_ps;
+    report_ps.put("fcl_dir",                  scan_report.fcl_dir);
+    report_ps.put("failed_names",             scan_report.failed_names);
+    report_ps.put("failed_reasons",           scan_report.failed_reasons);
+    report_ps.put("skipped_data_names",       scan_report.skipped_data_names);
+    report_ps.put("skipped_data_reasons",     scan_report.skipped_data_reasons);
+    report_ps.put("skipped_bug_names",        scan_report.skipped_bug_names);
+    report_ps.put("skipped_bug_reasons",      scan_report.skipped_bug_reasons);
+    report_ps.put("skipped_other_names",      scan_report.skipped_other_names);
+    report_ps.put("skipped_other_reasons",    scan_report.skipped_other_reasons);
+    report_ps.put("registered_no_fcl",        scan_report.registered_no_fcl);
+    report_ps.put("genie_rw_skipped_names",   scan_report.genie_rw_skipped_names);
+    report_ps.put("genie_rw_skipped_reasons", scan_report.genie_rw_skipped_reasons);
+    out_ps.put("_scan_report", report_ps);
+  }
 
   fhicl::ParameterSet wrapped_out_ps;
   wrapped_out_ps.put("generated_systematic_provider_configuration", out_ps);

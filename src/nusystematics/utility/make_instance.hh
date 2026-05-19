@@ -78,4 +78,32 @@ make_instance(fhicl::ParameterSet const &paramset) {
   }
 }
 
+// Single source of truth for what tool_type strings the dispatch above
+// knows about. Used by GenerateAllDialsConfigNuSyst to emit a "registered
+// but no tool config found" report, and by `nusyst inventory` to surface
+// it. Keep in sync with the if/else if chain above.
+inline std::vector<std::string> RegisteredToolTypes() {
+  return {
+    "GENIEReWeight",
+    "MKSinglePiTemplate",
+    "MINERvAq0q3Weighting",
+    "NOvAStyleNonResPionNorm",
+    "MiscInteractionSysts",
+    "BeRPAWeight",
+    "MINERvAE2p2h",
+    "EbLepMomShift",
+    "FSILikeEAvailSmearing",
+    "SkeleWeighter",
+    "ZExpPCAWeighter",
+    "DIRT2_Emiss",
+    "ResIso",
+    "CCQERPAReweight",
+    "CCQETemplateReweight",
+    "FSIReweight",
+    "WSReweight",
+    "QEInterference",
+    "MECq0q3InterpWeighting",
+  };
+}
+
 } // namespace nusyst
