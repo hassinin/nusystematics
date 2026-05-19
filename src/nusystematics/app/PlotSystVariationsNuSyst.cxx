@@ -1768,11 +1768,15 @@ inline const char *kPaletteBlueSequentialCmd =
   "TColor::CreateGradientColorTable(5,s,r,g,b,255);";
 
 // Compile-time helpers used outside TExec (e.g. one-time init in main).
+// 7 stops, divergent blue->white->red. The midpoint stop is pure white
+// (1.0, 1.0, 1.0) -- not the ColorBrewer 247/247/247 light gray -- so the
+// central band on a 99-contour palette renders as true white and the
+// colourbar tick at 0 visibly sits on white, not on faint pink.
 inline void UseBlueWhiteRedPalette() {
-  static Double_t stops[7]  = {0.00, 0.17, 0.33, 0.50, 0.67, 0.83, 1.00};
-  static Double_t reds[7]   = {0.129, 0.263, 0.573, 0.969, 0.957, 0.839, 0.698};
-  static Double_t greens[7] = {0.400, 0.576, 0.773, 0.969, 0.647, 0.376, 0.094};
-  static Double_t blues[7]  = {0.674, 0.764, 0.871, 0.969, 0.510, 0.302, 0.169};
+  static Double_t stops[7]  = {0.00,  0.17,  0.33,  0.50, 0.67,  0.83,  1.00};
+  static Double_t reds[7]   = {0.129, 0.263, 0.573, 1.0,  0.957, 0.839, 0.698};
+  static Double_t greens[7] = {0.400, 0.576, 0.773, 1.0,  0.647, 0.376, 0.094};
+  static Double_t blues[7]  = {0.674, 0.764, 0.871, 1.0,  0.510, 0.302, 0.169};
   TColor::CreateGradientColorTable(7, stops, reds, greens, blues, 255);
 }
 inline void UseMagmaPalette() {
@@ -1811,6 +1815,15 @@ void Make2DPlots(const Hist2DMap &allhists2d,
   // on. It otherwise sits over the upper-right corner and obscures the
   // y-axis labels in tight panels.
   gStyle->SetOptStat(0);
+
+  // Force an ODD number of contour bands so the central band sits exactly
+  // on palette position 0.5. ROOT's default 20 bands (even) makes the band
+  // straddling 0 fetch its colour from position 10.5/20 = 0.525, which is
+  // already past the white midpoint and on the salmon side -- the colourbar
+  // tick at "0" then visibly lines up with light pink instead of white.
+  // 99 bands gives a smooth gradient and a clean central band at 49.5/99 =
+  // 0.500 = the BWR palette's pure-white midpoint.
+  gStyle->SetNumberContours(99);
 
   // Same channel ordering helper as 1D.
   auto channel_priority = [](const std::string &s) -> std::string {
@@ -1931,14 +1944,13 @@ void Make2DPlots(const Hist2DMap &allhists2d,
             rL->GetXaxis()->SetTitleSize(0.06); rL->GetYaxis()->SetTitleSize(0.06);
             rL->GetXaxis()->SetLabelSize(0.05); rL->GetYaxis()->SetLabelSize(0.05);
             rL->GetXaxis()->SetTitleOffset(1.1); rL->GetYaxis()->SetTitleOffset(1.2);
-            // gStyle->SetPalette is GLOBAL — ROOT looks up the palette at
-            // canvas-print time, so without per-pad TExec hooks all 3 pads
-            // would end up using the LAST palette set (the right panel's
-            // BWR, in this case). TExec runs an arbitrary command at the
-            // moment the pad renders, so we can pin a different palette per
-            // pad.
             UseBlueWhiteRedPalette();
-            rL->Draw("COLZ");
+            rL->Draw("COLZ0");
+            // Overlay the axis frame on top of the COLZ fill -- on this ROOT
+            // build, COLZ0 with SetMinimum/SetMaximum sometimes skips the
+            // frame redraw, leaving the data region without its black
+            // rectangular border. AXIS SAME re-paints axes + frame.
+            rL->Draw("AXIS SAME");
           }
 
           // ---- middle panel: CV 2D ------------------------------------------
@@ -1967,7 +1979,7 @@ void Make2DPlots(const Hist2DMap &allhists2d,
           // any second palette set later (e.g. for the right panel) would
           // overwrite the middle panel's at canvas-print time.
           UseBlueWhiteRedPalette();
-          cv_scaled->Draw("COLZ");
+          cv_scaled->Draw("COLZ0");
 
           // ---- right panel: +sigma ratio ------------------------------------
           x1 = col_w[0] + col_w[1]; x2 = 1.0;
@@ -2003,7 +2015,8 @@ void Make2DPlots(const Hist2DMap &allhists2d,
             rR->GetXaxis()->SetLabelSize(0.05); rR->GetYaxis()->SetLabelSize(0.05);
             rR->GetXaxis()->SetTitleOffset(1.1); rR->GetYaxis()->SetTitleOffset(1.2);
             UseBlueWhiteRedPalette();
-            rR->Draw("COLZ");
+            rR->Draw("COLZ0");
+            rR->Draw("AXIS SAME");
           }
         }
 
