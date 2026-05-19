@@ -38,8 +38,12 @@
 #include "TPad.h"
 #include "TStyle.h"
 #include "TROOT.h"
+#include "TColor.h"
+#include "TTreeFormula.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <unistd.h>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -50,52 +54,262 @@
 #include <string>
 #include <vector>
 #include <cmath>
-#include <cstdlib>
 
 using namespace systtools;
 using namespace nusyst;
 
 // ===== Predefined variables ================================================
 struct VarDef {
-  std::string branch;
-  std::string label;      // x-axis label
-  std::string diffLabel;  // y-axis for diff xsec
+  std::string branch;     // unique key
+  // Quantity label only (no units). Used as both the x-axis quantity name
+  // and as the numerator in the auto-generated y-axis "d#sigma/d<label>".
+  // Examples: "Q^{2}", "p_{p}^{lead}", "cos#theta_{lep}".
+  std::string label;
+  // Units appended in parentheses on the x-axis ("<label> (<units>)") and as
+  // a per-unit denominator on the y-axis ("(cm^{2}/<units>/nucleus)"). Leave
+  // empty for dimensionless quantities (counts, angles); the y-axis then
+  // reads "(cm^{2}/nucleus)".
+  std::string units;
+  // Optional explicit override for the dsigma/d<x> numerator. If empty,
+  // auto-generated as "d#sigma/d" + label.
+  std::string diffLabel;
   double xmin, xmax;
+  // If non-empty, evaluate this TTreeFormula expression per event instead of
+  // reading a single branch via GetVarValue. Set from a -v spec like
+  //   -v "name:Max$(sqrt(fsparticles_px*fsparticles_px+...)):0,2[,nbins]"
+  // Formula vars work only in flat-tree mode (TTreeFormula needs a TTree).
+  std::string formula;
+  // Per-variable bin count override; 0 = use cliopts::nbins.
+  int         nbins = 0;
 };
 
+// X-axis title built from label + optional units.
+inline std::string BuildXAxisTitle(VarDef const &vd) {
+  if (vd.units.empty()) return vd.label;
+  return vd.label + " (" + vd.units + ")";
+}
+
+// Y-axis title for the diff-xsec panel. Uses explicit diffLabel if set, else
+// auto-generates "d#sigma/d<label>". Appends a per-unit denominator that
+// reflects how ScaleToDiffXsec normalises the histogram (per nucleus, in cm
+// squared, per bin width in x-axis units).
+inline std::string BuildYAxisTitle(VarDef const &vd) {
+  std::string numerator = vd.diffLabel.empty()
+                            ? std::string("d#sigma/d") + vd.label
+                            : vd.diffLabel;
+  std::string denom = vd.units.empty()
+                        ? std::string("cm^{2}/nucleus")
+                        : std::string("cm^{2}/") + vd.units + "/nucleus";
+  return numerator + " (" + denom + ")";
+}
+
+// Built-in variable registry. The runtime registry `g_vars_registry` starts
+// from a copy of this map and may be extended / overridden / disabled by
+// `--plot-config <file.fcl>` (see LoadPlotConfig).
 static const std::map<std::string, VarDef> kPredefinedVars = {
-  {"Enu",      {"Enu_true",          "E_{#nu} (GeV)",      "d#sigma/dE_{#nu}",          0, 10}},
-  {"q0",       {"q0",                "q_{0} (GeV)",        "d#sigma/dq_{0}",            0, 5}},
-  {"Q2",       {"Q2",                "Q^{2} (GeV^{2})",    "d#sigma/dQ^{2}",            0, 5}},
-  {"q3",       {"q3",                "|#vec{q}| (GeV)",    "d#sigma/d|#vec{q}|",        0, 5}},
-  {"W",        {"w",                 "W (GeV)",            "d#sigma/dW",                0, 3}},
-  {"plep",     {"plep",              "p_{lep} (GeV)",      "d#sigma/dp_{lep}",          0, 5}},
-  {"coslep",   {"coslep",            "cos#theta_{lep}",    "d#sigma/dcos#theta_{lep}",  -1, 1}},
-  {"EAvail",   {"EAvail_GeV",        "E_{avail} (GeV)",    "d#sigma/dE_{avail}",        0, 3}},
-  {"Tp",       {"leading_proton_KE", "T_{p} (GeV)",        "d#sigma/dT_{p}",            0, 1.5}},
-  {"Emiss",    {"Emiss",             "E_{miss} (GeV)",     "d#sigma/dE_{miss}",         0, 0.5}},
-  {"pmiss",    {"pmiss",             "p_{miss} (GeV)",     "d#sigma/dp_{miss}",         0, 1}},
-  {"Ereco",    {"Ereco_cal",         "E_{reco}^{cal} (GeV)","d#sigma/dE_{reco}",        0, 10}},
-  {"nproton",  {"nproton",           "N_{proton}",         "d#sigma/dN_{p}",            0, 6}},
-  {"npip",     {"npip",              "N_{#pi^{+}}",        "d#sigma/dN_{#pi^{+}}",      0, 5}},
-  {"npim",     {"npim",              "N_{#pi^{-}}",        "d#sigma/dN_{#pi^{-}}",      0, 5}},
-  {"npi0",     {"npi0",              "N_{#pi^{0}}",        "d#sigma/dN_{#pi^{0}}",      0, 5}},
-  {"nneutron", {"nneutron",          "N_{neutron}",        "d#sigma/dN_{n}",            0, 6}},
+  // key            branch                label              units      diffLabel (empty -> auto from label)   xmin xmax
+  {"Enu",         {"Enu_true",          "E_{#nu}",           "GeV",     "",                                     0,  10}},
+  {"q0",          {"q0",                "q_{0}",             "GeV",     "",                                     0,   5}},
+  {"Q2",          {"Q2",                "Q^{2}",             "GeV^{2}", "",                                     0,   5}},
+  {"q3",          {"q3",                "|#vec{q}|",         "GeV",     "",                                     0,   5}},
+  {"W",           {"w",                 "W",                 "GeV",     "",                                     0,   3}},
+  {"plep",        {"plep",              "p_{lep}",           "GeV",     "",                                     0,   5}},
+  {"coslep",      {"coslep",            "cos#theta_{lep}",   "",        "",                                    -1,   1}},
+  {"EAvail",      {"EAvail_GeV",        "E_{avail}",         "GeV",     "",                                     0,   3}},
+  {"Tp",          {"leading_proton_KE", "T_{p}",             "GeV",     "",                                     0, 1.5}},
+  {"pLeadProton", {"leading_proton_p",  "p_{p}^{lead}",      "GeV",     "",                                     0, 2.0}},
+  {"x",           {"Bjorken_x",         "x",                 "",        "",                                     0, 2.0}},
+  {"pL",          {"plep_L",            "p_{L}^{lep}",       "GeV",     "",                                     0, 5.0}},
+  {"pT",          {"plep_T",            "p_{T}^{lep}",       "GeV",     "",                                     0, 2.0}},
+  {"Ereco",       {"Ereco_cal",         "E_{reco}^{cal}",    "GeV",     "",                                     0,  10}},
+  {"nproton",     {"nproton",           "N_{proton}",        "",        "",                                     0,   6}},
+  {"npip",        {"npip",              "N_{#pi^{+}}",       "",        "",                                     0,   5}},
+  {"npim",        {"npim",              "N_{#pi^{-}}",       "",        "",                                     0,   5}},
+  {"npi0",        {"npi0",              "N_{#pi^{0}}",       "",        "",                                     0,   5}},
+  {"nneutron",    {"nneutron",          "N_{neutron}",       "",        "",                                     0,   6}},
 };
 
-VarDef ResolveVar(const std::string &name) {
-  auto it = kPredefinedVars.find(name);
-  if (it != kPredefinedVars.end()) return it->second;
-  return {name, name, "d#sigma/d" + name, 0, 0};
+// Forward-declared cliopts fields written by LoadPlotConfig (which is
+// defined earlier in the file than the cliopts namespace block).
+namespace cliopts {
+  extern int plots_per_page;
+  extern double ratio_min_cv_count;
+}
+
+// Runtime variable registry. Initialised lazily from kPredefinedVars and
+// extended / overridden by --plot-config. Names with `enabled: false` in the
+// config are erased from this map.
+std::map<std::string, VarDef> g_vars_registry;
+
+void EnsureRegistryInitialised() {
+  if (g_vars_registry.empty())
+    g_vars_registry = kPredefinedVars;
+}
+
+void PrintAvailableVars(std::ostream &os) {
+  EnsureRegistryInitialised();
+  os << "Available -v variables (case-sensitive):\n";
+  for (auto const &[key, vd] : g_vars_registry) {
+    os << "  " << std::left << std::setw(14) << key
+       << "  range=[" << vd.xmin << ", " << vd.xmax << "]"
+       << (vd.formula.empty()
+              ? std::string("  branch=") + vd.branch
+              : std::string("  formula"))
+       << "\n";
+  }
+  os << "\nInline formula form (one-off, no config file):\n"
+     << "  -v \"<name>:<TTreeFormula expr>:<xmin>,<xmax>[,<nbins>]\"\n";
+}
+
+// Parse "name:formula:xmin,xmax[,nbins]" into a VarDef. Splits on the FIRST
+// colon (between name and the rest) and the LAST colon (between formula and
+// the range triple) so that the formula itself may contain a colon (ternary
+// `a?b:c`). Returns true if `spec` looks like the formula form.
+bool TryParseInlineFormulaSpec(const std::string &spec, VarDef &out_vd) {
+  size_t first = spec.find(':');
+  size_t last  = spec.rfind(':');
+  if (first == std::string::npos || first == last) return false;
+
+  std::string name    = spec.substr(0, first);
+  std::string formula = spec.substr(first + 1, last - first - 1);
+  std::string range   = spec.substr(last + 1);
+
+  std::vector<std::string> parts;
+  std::istringstream ss(range);
+  std::string tok;
+  while (std::getline(ss, tok, ',')) parts.push_back(tok);
+  if (parts.size() < 2) return false;
+
+  try {
+    out_vd = VarDef{};
+    out_vd.branch     = name;     // unique key / tag
+    out_vd.label      = name;     // no nice TLatex form available inline
+    out_vd.units      = "";       // unknown from inline spec; use config for units
+    out_vd.diffLabel  = "";       // auto from label
+    out_vd.xmin       = std::stod(parts[0]);
+    out_vd.xmax       = std::stod(parts[1]);
+    out_vd.formula    = formula;
+    out_vd.nbins      = (parts.size() >= 3) ? std::stoi(parts[2]) : 0;
+  } catch (std::exception const &) {
+    return false;
+  }
+  return true;
+}
+
+VarDef ResolveVar(const std::string &spec) {
+  EnsureRegistryInitialised();
+
+  // Inline formula form (contains a colon)
+  VarDef vd;
+  if (TryParseInlineFormulaSpec(spec, vd)) return vd;
+
+  // Lookup in registry (built-in + config overrides)
+  auto it = g_vars_registry.find(spec);
+  if (it != g_vars_registry.end()) return it->second;
+
+  std::cerr << "[ERROR]: Unknown variable '" << spec << "'.\n\n";
+  PrintAvailableVars(std::cerr);
+  std::cerr << "\nTo add new variables, write a plot-config fhicl and pass it\n"
+               "via --plot-config <file.fcl>.  See doc/PlotConfig.example.fcl\n"
+               "for the schema." << std::endl;
+  std::exit(4);
+}
+
+// Load a plot-config fhicl file and merge its `plot_config` table into the
+// global variable registry. Entries with `enabled: false` are erased. Entries
+// whose names match an existing built-in override that built-in's fields
+// (binning / labels / formula); fields omitted in the config inherit from the
+// built-in.
+void LoadPlotConfig(const std::string &path) {
+  EnsureRegistryInitialised();
+
+  // Try the literal path first (handles absolute paths and paths relative
+  // to cwd -- what most users will type), fall back to FHICL_FILE_PATH lookup
+  // (handles bare basenames like `MyPlotConfig.fcl` resolved from the search
+  // path). Without the literal-first attempt, fhicl's nonabsolute lookup
+  // refuses a path like `doc/Plot.fcl` because it interprets the slash as
+  // "must be findable verbatim in FHICL_FILE_PATH".
+  fhicl::ParameterSet raw;
+  std::string literal_err, lookup_err;
+  try {
+    cet::filepath_maker fm;
+    raw = fhicl::ParameterSet::make(path, fm);
+  } catch (std::exception const &e) {
+    literal_err = e.what();
+    try {
+      cet::filepath_lookup_nonabsolute fm("FHICL_FILE_PATH");
+      raw = fhicl::ParameterSet::make(path, fm);
+    } catch (std::exception const &e2) {
+      lookup_err = e2.what();
+    }
+  }
+  if (raw.is_empty()) {
+    std::cerr << "[ERROR]: Failed to parse plot-config fhicl '" << path << "'.\n"
+              << "         As literal path: " << literal_err << "\n"
+              << "         Via FHICL_FILE_PATH: " << lookup_err << std::endl;
+    std::exit(5);
+  }
+
+  fhicl::ParameterSet plot_cfg;
+  try { plot_cfg = raw.get<fhicl::ParameterSet>("plot_config"); }
+  catch (std::exception const &) {
+    std::cerr << "[ERROR]: '" << path
+              << "' has no top-level 'plot_config' table." << std::endl;
+    std::exit(5);
+  }
+
+  // Top-level scalar knobs in plot_config (not per-variable settings).
+  // The per-variable loop below skips these because is_key_to_table is false.
+  cliopts::plots_per_page      = plot_cfg.get<int>("plots_per_page",
+                                                    cliopts::plots_per_page);
+  cliopts::ratio_min_cv_count  = plot_cfg.get<double>("ratio_min_cv_count",
+                                                       cliopts::ratio_min_cv_count);
+
+  for (auto const &name : plot_cfg.get_names()) {
+    if (!plot_cfg.is_key_to_table(name)) continue;
+    fhicl::ParameterSet entry;
+    try { entry = plot_cfg.get<fhicl::ParameterSet>(name); }
+    catch (std::exception const &) { continue; }
+
+    if (!entry.get<bool>("enabled", true)) {
+      g_vars_registry.erase(name);
+      continue;
+    }
+
+    // Start from existing entry if overriding a built-in, else a blank VarDef
+    // seeded with sensible defaults.
+    auto existing = g_vars_registry.find(name);
+    VarDef vd = (existing != g_vars_registry.end()) ? existing->second : VarDef{};
+    if (existing == g_vars_registry.end()) {
+      vd.branch    = name;
+      vd.label     = name;  // user should override with a TLatex-clean version
+      vd.units     = "";
+      vd.diffLabel = "";    // auto = "d#sigma/d" + label
+    }
+    vd.branch    = entry.get<std::string>("branch", vd.branch);
+    vd.label     = entry.get<std::string>("label", vd.label);
+    vd.units     = entry.get<std::string>("units", vd.units);
+    vd.diffLabel = entry.get<std::string>("diff_label", vd.diffLabel);
+    vd.xmin      = entry.get<double>("xmin", vd.xmin);
+    vd.xmax      = entry.get<double>("xmax", vd.xmax);
+    vd.nbins     = entry.get<int>("nbins", vd.nbins);
+    vd.formula   = entry.get<std::string>("formula", vd.formula);
+    g_vars_registry[name] = vd;
+  }
+
+  std::cerr << "[INFO]: plot-config '" << path
+            << "' applied -- registry has " << g_vars_registry.size()
+            << " variables." << std::endl;
 }
 
 // ===== Channel classification ==============================================
 struct EventVars {
   double Enu, q0, Q2, q3, w, plep, coslep, EAvail, leading_proton_KE, xsec;
-  // Magnitude of highest-|p| proton's 3-momentum (-999 if no FS proton).
+  // Magnitude of highest-|p| proton's 3-momentum; -999 if no FS proton.
   double leading_proton_p;
   // Bjorken x and lepton momentum decomposition (along / perpendicular to
-  // the incoming neutrino direction).
+  // the incoming neutrino direction). Used as 1D vars and as axes for the
+  // built-in 2D pairs.
   double Bjorken_x;
   double plep_L;
   double plep_T;
@@ -248,6 +462,15 @@ size_t NMax = std::numeric_limits<size_t>::max();
 int nbins = 50;
 bool make_pdf = true;
 bool make_root = true;
+// Page layout: how many (variable, channel) panels per PDF page. 6 keeps the
+// 3×2 default grid that fits 8.5×11 nicely; overridable via plot_config.
+int plots_per_page = 6;
+// Ratio-panel low-stats suppression: any (var/CV - 1) bin whose CV count is
+// below this many events is blanked out so a near-zero denominator doesn't
+// produce a spike that dominates the panel's y-axis range. NIWG calls the
+// equivalent knob `min_event_rate`. Default 0 = no suppression; overridable
+// via plot_config `ratio_min_cv_count`.
+double ratio_min_cv_count = 0.0;
 } // namespace cliopts
 
 void SayUsage(char const *argv[]) {
@@ -261,14 +484,17 @@ void SayUsage(char const *argv[]) {
     "                         where the dial does not apply)\n"
     "    -k <fhicl_key>       Top-level fhicl key (default: generated_systematic_provider_configuration)\n"
     "    -o <output>          Output basename (default: syst_variations)\n"
-    "    -v <var1,var2,...>    Variables to plot (default: all predefined)\n"
-    "                         Predefined: Enu,q0,Q2,q3,W,plep,coslep,EAvail,Tp\n"
+    "    -v <var1,var2,...>    Variables to plot (default: all predefined).\n"
+    "                         Pass --list-vars to see what's available.\n"
     "    -p <par1,par2,...>    Systematic parameters to plot (default: all)\n"
     "    -t <treename>        Tree name (default: events)\n"
     "    -b <branch>          NtpMCEventRecord branch (default: gmcrec)\n"
     "    -N <NMax>            Max events to process\n"
     "    --nbins <n>          Number of bins (default: 50)\n"
     "    --no-pdf / --no-root Skip output\n"
+    "    --list-vars          Print the table of available -v variables and exit\n"
+    "    --plot-config <f>    fhicl file overriding / adding plot variables.\n"
+    "                         See config/PlotConfig.example.fcl for the schema.\n"
     "    -?|--help            Show this message\n"
     << std::endl;
 }
@@ -278,11 +504,22 @@ void HandleOpts(int argc, char const *argv[]) {
   while (opt < argc) {
     std::string s(argv[opt]);
     if (s == "-?" || s == "--help") { SayUsage(argv); exit(0); }
+    else if (s == "--list-vars") {
+      PrintAvailableVars(std::cout);
+      exit(0);
+    }
+    else if (s == "--plot-config") {
+      // Load immediately so subsequent --list-vars sees the augmented set,
+      // and so -v lookups can hit config-only entries.
+      LoadPlotConfig(argv[++opt]);
+    }
     else if (s == "-i") cliopts::input_file = argv[++opt];
     else if (s == "-c") cliopts::fclname = argv[++opt];
     else if (s == "-k") cliopts::fhicl_key = argv[++opt];
     else if (s == "-o") {
-      // Strip trailing .pdf / .root so users can pass a full filename.
+      // -o is a *base* name; the tool appends .pdf and .root. If the user
+      // passed e.g. `-o foo.pdf`, strip the extension so we don't produce
+      // `foo.pdf.pdf` / `foo.pdf.root`.
       std::string v = argv[++opt];
       for (auto const &ext : {std::string(".pdf"), std::string(".root")}) {
         if (v.size() >= ext.size() &&
@@ -366,19 +603,23 @@ void BookHistograms(const std::string &channel, const ParamMeta &pm,
                     TTree *tree_for_autorange = nullptr) {
   for (auto &vd : vars) {
     double xmin = vd.xmin, xmax = vd.xmax;
-    if (xmin == 0 && xmax == 0 && tree_for_autorange) {
+    if (xmin == 0 && xmax == 0 && tree_for_autorange && vd.formula.empty()) {
       auto r = AutoRange(tree_for_autorange, vd.branch);
       xmin = r.first; xmax = r.second;
     }
     if (xmin == 0 && xmax == 0) { xmin = 0; xmax = 5; }
 
+    // Per-var nbins override (set by `--plot-config` or inline `-v` spec);
+    // 0 = use the global --nbins.
+    int nbins = vd.nbins > 0 ? vd.nbins : cliopts::nbins;
+
     std::string tag = channel + "_" + pm.fullname + "_" + vd.branch;
     SystHists sh;
-    sh.h_cv = new TH1D(("h_cv_" + tag).c_str(), "", cliopts::nbins, xmin, xmax);
+    sh.h_cv = new TH1D(("h_cv_" + tag).c_str(), "", nbins, xmin, xmax);
     sh.h_cv->Sumw2();
     sh.tweakvals = pm.tweakvalues;
     for (int i = 0; i < pm.ntweaks; ++i) {
-      TH1D *hv = new TH1D(Form("h_var%d_%s", i, tag.c_str()), "", cliopts::nbins, xmin, xmax);
+      TH1D *hv = new TH1D(Form("h_var%d_%s", i, tag.c_str()), "", nbins, xmin, xmax);
       hv->Sumw2();
       sh.h_var.push_back(hv);
     }
@@ -469,6 +710,91 @@ LoadAppliesToChannelsMap(const std::string &fclname,
   return out;
 }
 
+// Compute Bjorken x / pL / pT from base branches when the dedicated scalar
+// branches aren't present in the input tree (older flat trees pre-dating
+// nusyst tweaks shipping Bjorken_x/plep_L/plep_T). Mutates the relevant
+// EventVars fields in place; leaves them untouched if the inputs needed
+// for the fallback are also missing.
+//
+// Required inputs:
+//   * Bjorken_x: just Q2 and q0 (always present in the tweaks tree).
+//   * pL / pT  : isparticles_* and fsparticles_* vectors (per-particle
+//                4-vectors). We pick the IS neutrino's direction (|PDG| in
+//                {12, 14, 16}) and the leading-|p| FS lepton (|PDG| in
+//                {11, 12, 13, 14, 15, 16}). If the vectors are absent, pL/pT
+//                stay -999 and the consuming pair (pL_pT) silently skips.
+inline void ApplyDerivedFallbacks(
+    EventVars &evars,
+    bool has_x, bool has_pL, bool has_pT,
+    std::vector<int>    const *is_pdg, std::vector<double> const *is_px,
+    std::vector<double> const *is_py,  std::vector<double> const *is_pz,
+    std::vector<int>    const *fs_pdg, std::vector<double> const *fs_px,
+    std::vector<double> const *fs_py,  std::vector<double> const *fs_pz) {
+
+  // -- Bjorken x ---------------------------------------------------------
+  if (!has_x) {
+    static const double M_N = 0.93827203;  // GeV
+    double safe_q0 = (evars.q0 > 1e-9) ? evars.q0 : 1e-9;
+    evars.Bjorken_x = evars.Q2 / (2.0 * M_N * safe_q0);
+  }
+
+  // -- pL / pT -----------------------------------------------------------
+  if (has_pL && has_pT) return;  // nothing to do
+
+  // Preferred path: full per-particle vectors. Pick the IS neutrino's
+  // direction and the leading-|p| FS lepton; project.
+  bool from_vectors = false;
+  if (is_pdg && fs_pdg && !is_pdg->empty() && !fs_pdg->empty()) {
+    double nu_px = 0, nu_py = 0, nu_pz = 0, nu_mag2 = 0;
+    for (size_t i = 0; i < is_pdg->size(); ++i) {
+      int a = std::abs((*is_pdg)[i]);
+      if (a == 12 || a == 14 || a == 16) {
+        nu_px = (*is_px)[i]; nu_py = (*is_py)[i]; nu_pz = (*is_pz)[i];
+        nu_mag2 = nu_px*nu_px + nu_py*nu_py + nu_pz*nu_pz;
+        break;
+      }
+    }
+    if (nu_mag2 > 1e-18) {
+      double nu_mag = std::sqrt(nu_mag2);
+      double nx = nu_px/nu_mag, ny = nu_py/nu_mag, nz = nu_pz/nu_mag;
+      double best_p = -1, best_px = 0, best_py = 0, best_pz = 0;
+      for (size_t i = 0; i < fs_pdg->size(); ++i) {
+        int a = std::abs((*fs_pdg)[i]);
+        if (a == 11 || a == 12 || a == 13 || a == 14 || a == 15 || a == 16) {
+          double px = (*fs_px)[i], py = (*fs_py)[i], pz = (*fs_pz)[i];
+          double pmag = std::sqrt(px*px + py*py + pz*pz);
+          if (pmag > best_p) { best_p = pmag; best_px = px; best_py = py; best_pz = pz; }
+        }
+      }
+      if (best_p >= 0) {
+        double pL = best_px * nx + best_py * ny + best_pz * nz;
+        double pT2 = std::max(0.0, best_p * best_p - pL * pL);
+        if (!has_pL) evars.plep_L = pL;
+        if (!has_pT) evars.plep_T = std::sqrt(pT2);
+        from_vectors = true;
+      }
+    }
+  }
+  if (from_vectors) return;
+
+  // Older-tree fallback: per-particle vectors are missing too, but plep,
+  // Enu and q3 are always available. Solve for pL under the convention
+  // that the incoming neutrino is along +z (true for typical GENIE flat
+  // events): q3^2 = pT^2 + (Enu - pL)^2, plep^2 = pT^2 + pL^2  =>
+  //   pL = (plep^2 + Enu^2 - q3^2) / (2 Enu)
+  //   pT = sqrt(max(0, plep^2 - pL^2))
+  // Reproduces the per-vector result when the neutrino is along z (the
+  // typical case); a generic non-z beam direction would need the per-
+  // particle vectors and bypasses this branch.
+  if (evars.Enu > 1e-9 && evars.plep > 0) {
+    double pL = (evars.plep * evars.plep + evars.Enu * evars.Enu - evars.q3 * evars.q3)
+                / (2.0 * evars.Enu);
+    double pT2 = std::max(0.0, evars.plep * evars.plep - pL * pL);
+    if (!has_pL) evars.plep_L = pL;
+    if (!has_pT) evars.plep_T = std::sqrt(pT2);
+  }
+}
+
 // Resolve which provider declared a parameter by longest-prefix match on the
 // param's full name (e.g. "GENIEReWeight_CCQE_MaCCQE" -> "GENIEReWeight_CCQE").
 // Returns nullptr if no provider in the map is a prefix.
@@ -506,11 +832,23 @@ void FillFromFlatTree(
   bool is_cc = false, is_qe = false, is_mec = false, is_res = false, is_dis = false;
   double q0 = 0, Q2 = 0, q3 = 0, w = 0, plep = 0, Enu_true = 0, EAvail_GeV = 0;
   double Emiss = 0, pmiss = 0;
-  double Ereco_cal_b = 0;
-  double leading_proton_p_b = 0, Bjorken_x_b = 0, plep_L_b = 0, plep_T_b = 0;
-  int nproton_b = 0, npip_b = 0, npim_b = 0, npi0_b = 0, nneutron_b = 0;
   std::vector<double> *fsprotons_KE = nullptr;
   std::vector<int> *fsi_pdgs = nullptr;
+
+  // Build one TTreeFormula per formula-backed VarDef. nullptr for plain
+  // built-in vars; we just check formulas[i] != nullptr at eval time.
+  std::vector<std::unique_ptr<TTreeFormula>> formulas(vars.size());
+  for (size_t i = 0; i < vars.size(); ++i) {
+    if (vars[i].formula.empty()) continue;
+    formulas[i] = std::make_unique<TTreeFormula>(
+        ("v_" + vars[i].branch).c_str(), vars[i].formula.c_str(), tree);
+    if (formulas[i]->GetNdim() == 0) {
+      std::cerr << "[ERROR]: TTreeFormula for variable '" << vars[i].branch
+                << "' failed to compile (expression: " << vars[i].formula
+                << "). Aborting." << std::endl;
+      std::exit(5);
+    }
+  }
 
   tree->SetBranchAddress("xsec", &xsec);
   tree->SetBranchAddress("nu_pdg", &nu_pdg);
@@ -534,34 +872,55 @@ void FillFromFlatTree(
   if (has_Emiss) tree->SetBranchAddress("Emiss", &Emiss);
   if (has_pmiss) tree->SetBranchAddress("pmiss", &pmiss);
 
+  // Scalar branches added to the events tree by DumpConfiguredTweaksNuSyst
+  // for compatibility with the kPredefinedVars list. has_<name> defaults to
+  // false so older trees (pre-dating these branches) silently fall back to
+  // the -999 sentinel and the per-event loop skips those vars.
+  double Ereco_cal = 0;
+  int nproton = 0, npip = 0, npim = 0, npi0 = 0, nneutron = 0;
+  bool has_Ereco    = tree->GetBranch("Ereco_cal") != nullptr;
+  bool has_nproton  = tree->GetBranch("nproton")   != nullptr;
+  bool has_npip     = tree->GetBranch("npip")      != nullptr;
+  bool has_npim     = tree->GetBranch("npim")      != nullptr;
+  bool has_npi0     = tree->GetBranch("npi0")      != nullptr;
+  bool has_nneutron = tree->GetBranch("nneutron")  != nullptr;
+  if (has_Ereco)    tree->SetBranchAddress("Ereco_cal", &Ereco_cal);
+  if (has_nproton)  tree->SetBranchAddress("nproton",   &nproton);
+  if (has_npip)     tree->SetBranchAddress("npip",      &npip);
+  if (has_npim)     tree->SetBranchAddress("npim",      &npim);
+  if (has_npi0)     tree->SetBranchAddress("npi0",      &npi0);
+  if (has_nneutron) tree->SetBranchAddress("nneutron",  &nneutron);
+
   bool has_proton_branch = tree->GetBranch("fsprotons_KE") != nullptr;
   if (has_proton_branch) tree->SetBranchAddress("fsprotons_KE", &fsprotons_KE);
+  double leading_proton_p = -999;
+  bool has_leading_proton_p = tree->GetBranch("leading_proton_p") != nullptr;
+  if (has_leading_proton_p)
+    tree->SetBranchAddress("leading_proton_p", &leading_proton_p);
+  // x / pL / pT scalars (added to nusyst tweaks for the 2D pair defaults).
+  double Bjorken_x = -999, plep_L = -999, plep_T = -999;
+  bool has_x  = tree->GetBranch("Bjorken_x") != nullptr;
+  bool has_pL = tree->GetBranch("plep_L")    != nullptr;
+  bool has_pT = tree->GetBranch("plep_T")    != nullptr;
+  if (has_x)  tree->SetBranchAddress("Bjorken_x", &Bjorken_x);
+  if (has_pL) tree->SetBranchAddress("plep_L",    &plep_L);
+  if (has_pT) tree->SetBranchAddress("plep_T",    &plep_T);
+  // Per-particle 4-vectors for fallback computation of x/pL/pT when the
+  // dedicated scalar branches are absent (older flat trees).
+  std::vector<int>    *is_pdg = nullptr, *fs_pdg = nullptr;
+  std::vector<double> *is_px = nullptr, *is_py = nullptr, *is_pz = nullptr;
+  std::vector<double> *fs_px = nullptr, *fs_py = nullptr, *fs_pz = nullptr;
+  if (tree->GetBranch("isparticles_pdg")) tree->SetBranchAddress("isparticles_pdg", &is_pdg);
+  if (tree->GetBranch("isparticles_px"))  tree->SetBranchAddress("isparticles_px",  &is_px);
+  if (tree->GetBranch("isparticles_py"))  tree->SetBranchAddress("isparticles_py",  &is_py);
+  if (tree->GetBranch("isparticles_pz"))  tree->SetBranchAddress("isparticles_pz",  &is_pz);
+  if (tree->GetBranch("fsparticles_pdg")) tree->SetBranchAddress("fsparticles_pdg", &fs_pdg);
+  if (tree->GetBranch("fsparticles_px"))  tree->SetBranchAddress("fsparticles_px",  &fs_px);
+  if (tree->GetBranch("fsparticles_py"))  tree->SetBranchAddress("fsparticles_py",  &fs_py);
+  if (tree->GetBranch("fsparticles_pz"))  tree->SetBranchAddress("fsparticles_pz",  &fs_pz);
 
   bool has_fsi_pdgs = tree->GetBranch("fsi_pdgs") != nullptr;
   if (has_fsi_pdgs) tree->SetBranchAddress("fsi_pdgs", &fsi_pdgs);
-
-  // Optional scalar branches written by the newer DumpConfiguredTweaks.
-  // When present they override the fallback calculations below.
-  bool has_Ereco_b   = tree->GetBranch("Ereco_cal")        != nullptr;
-  bool has_LeadP_b   = tree->GetBranch("leading_proton_p") != nullptr;
-  bool has_Bx_b      = tree->GetBranch("Bjorken_x")        != nullptr;
-  bool has_pL_b      = tree->GetBranch("plep_L")           != nullptr;
-  bool has_pT_b      = tree->GetBranch("plep_T")           != nullptr;
-  bool has_nproton_b = tree->GetBranch("nproton")          != nullptr;
-  bool has_npip_b    = tree->GetBranch("npip")             != nullptr;
-  bool has_npim_b    = tree->GetBranch("npim")             != nullptr;
-  bool has_npi0_b    = tree->GetBranch("npi0")             != nullptr;
-  bool has_nneut_b   = tree->GetBranch("nneutron")         != nullptr;
-  if (has_Ereco_b)   tree->SetBranchAddress("Ereco_cal",        &Ereco_cal_b);
-  if (has_LeadP_b)   tree->SetBranchAddress("leading_proton_p", &leading_proton_p_b);
-  if (has_Bx_b)      tree->SetBranchAddress("Bjorken_x",        &Bjorken_x_b);
-  if (has_pL_b)      tree->SetBranchAddress("plep_L",           &plep_L_b);
-  if (has_pT_b)      tree->SetBranchAddress("plep_T",           &plep_T_b);
-  if (has_nproton_b) tree->SetBranchAddress("nproton",          &nproton_b);
-  if (has_npip_b)    tree->SetBranchAddress("npip",             &npip_b);
-  if (has_npim_b)    tree->SetBranchAddress("npim",             &npim_b);
-  if (has_npi0_b)    tree->SetBranchAddress("npi0",             &npi0_b);
-  if (has_nneut_b)   tree->SetBranchAddress("nneutron",         &nneutron_b);
 
   // Tweak response branches
   struct PBranch {
@@ -613,52 +972,32 @@ void FillFromFlatTree(
     evars.has_coslep = false; evars.coslep = -999;
     evars.has_leading_proton = has_proton_branch && fsprotons_KE && !fsprotons_KE->empty();
     evars.leading_proton_KE = evars.has_leading_proton ? (*fsprotons_KE)[0] : -999;
-    evars.leading_proton_p = has_LeadP_b ? leading_proton_p_b : -999;
     evars.Emiss = has_Emiss ? Emiss : -999;
     evars.pmiss = has_pmiss ? pmiss : -999;
 
-    // Calorimetric reco energy: Eavail + lepton energy (simple calorimetric).
-    // Prefer the branch when DumpConfiguredTweaks wrote it; fall back to a
-    // muon-mass approximation otherwise.
-    if (has_Ereco_b) {
-      evars.Ereco_cal = Ereco_cal_b;
+    // Calorimetric reco energy + multiplicities: prefer the new dedicated
+    // scalar branches written by DumpConfiguredTweaksNuSyst; if the tree
+    // pre-dates them (has_<name> false), fall back to legacy derivations.
+    if (has_Ereco) {
+      evars.Ereco_cal = Ereco_cal;
     } else {
-      double Elep = std::sqrt(plep * plep + 0.10566 * 0.10566);
+      double Elep = std::sqrt(plep * plep + 0.10566 * 0.10566); // assume muon
       evars.Ereco_cal = EAvail_GeV + Elep;
     }
-
-    // Particle multiplicities: prefer scalar branches when present, else 0.
-    evars.nproton = has_nproton_b
-                        ? nproton_b
-                        : (has_proton_branch && fsprotons_KE ? (int)fsprotons_KE->size() : 0);
-    evars.npip      = has_npip_b  ? npip_b  : 0;
-    evars.npim      = has_npim_b  ? npim_b  : 0;
-    evars.npi0      = has_npi0_b  ? npi0_b  : 0;
-    evars.nneutron  = has_nneut_b ? nneutron_b : 0;
-
-    // Bjorken x: prefer the branch, else compute Q2/(2 M_N q0).
-    if (has_Bx_b) {
-      evars.Bjorken_x = Bjorken_x_b;
-    } else {
-      double safe_q0 = (q0 > 1e-9) ? q0 : 1e-9;
-      evars.Bjorken_x = Q2 / (2.0 * 0.9389 * safe_q0);
-    }
-
-    // pL / pT: prefer branches, else approximate assuming neutrino along z.
-    // For an incoming neutrino aligned with z, plep_L = (plep^2 + Enu^2 - q3^2)/(2 Enu).
-    if (has_pL_b) {
-      evars.plep_L = plep_L_b;
-    } else if (Enu_true > 1e-9) {
-      evars.plep_L = (plep * plep + Enu_true * Enu_true - q3 * q3) / (2.0 * Enu_true);
-    } else {
-      evars.plep_L = -999;
-    }
-    if (has_pT_b) {
-      evars.plep_T = plep_T_b;
-    } else {
-      double pT2 = plep * plep - evars.plep_L * evars.plep_L;
-      evars.plep_T = (pT2 > 0) ? std::sqrt(pT2) : -999;
-    }
+    evars.leading_proton_p = has_leading_proton_p ? leading_proton_p : -999;
+    evars.Bjorken_x        = has_x ? Bjorken_x : -999;
+    evars.plep_L           = has_pL ? plep_L   : -999;
+    evars.plep_T           = has_pT ? plep_T   : -999;
+    ApplyDerivedFallbacks(evars, has_x, has_pL, has_pT,
+                          is_pdg, is_px, is_py, is_pz,
+                          fs_pdg, fs_px, fs_py, fs_pz);
+    evars.nproton  = has_nproton  ? nproton
+                                  : (has_proton_branch && fsprotons_KE
+                                        ? (int)fsprotons_KE->size() : 0);
+    evars.npip     = has_npip     ? npip     : 0;
+    evars.npim     = has_npim     ? npim     : 0;
+    evars.npi0     = has_npi0     ? npi0     : 0;
+    evars.nneutron = has_nneutron ? nneutron : 0;
 
     counts.Count(evars);
     std::string chkey = MakeChannelKey(evars);
@@ -680,9 +1019,18 @@ void FillFromFlatTree(
       }
 
       auto &var_hists = allhists[chkey][pm.fullname];
-      for (auto &vd : vars) {
-        double x = GetVarValue(evars, vd.branch);
-        if (x <= -999) continue;
+      for (size_t vi = 0; vi < vars.size(); ++vi) {
+        auto const &vd = vars[vi];
+        double x;
+        if (formulas[vi]) {
+          // TTreeFormula::EvalInstance(0) returns the value for the current
+          // tree entry; for Max$/Sum$ aggregate forms it folds across the
+          // referenced vectors and returns a single scalar per event.
+          x = formulas[vi]->EvalInstance(0);
+        } else {
+          x = GetVarValue(evars, vd.branch);
+          if (x <= -999) continue;
+        }
         auto vit = var_hists.find(vd.branch);
         if (vit == var_hists.end()) continue;
         auto &sh = vit->second;
@@ -705,13 +1053,58 @@ void FillFromGHEP(
     HistMap &allhists,
     EventCounts &counts) {
 
+  // Two-step load so a -p filter can drop providers whose dials all miss
+  // before any provider is instantiated. Mirrors nusyst tweaks / response.
   nusyst::quiet::SetGlobalQuiet();
   response_helper phh;
   {
     nusyst::quiet::StdoutSink _quiet;
     genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
         "Messenger_whisper.xml");
-    phh = response_helper(fclname);
+
+    fhicl::ParameterSet raw_ps;
+    {
+      std::unique_ptr<cet::filepath_maker> fm =
+          std::make_unique<cet::filepath_lookup_nonabsolute>("FHICL_FILE_PATH");
+      raw_ps = fhicl::ParameterSet::make(fclname, *fm);
+    }
+    fhicl::ParameterSet gen_ps =
+        raw_ps.get<fhicl::ParameterSet>(cliopts::fhicl_key);
+
+    if (!cliopts::parameters.empty()) {
+      auto provider_names =
+          gen_ps.get<std::vector<std::string>>("syst_providers");
+      std::vector<std::string> kept;
+      for (auto const &pname : provider_names) {
+        fhicl::ParameterSet prov;
+        try { prov = gen_ps.get<fhicl::ParameterSet>(pname); }
+        catch (...) { continue; }
+        bool any_match = false;
+        for (auto const &key : prov.get_names()) {
+          if (!prov.is_key_to_table(key)) continue;
+          try {
+            fhicl::ParameterSet sub = prov.get<fhicl::ParameterSet>(key);
+            if (!sub.has_key("prettyName")) continue;
+            std::string pretty = sub.get<std::string>("prettyName");
+            // Reuse the existing ParamSelected() helper (matches the
+            // provider-qualified `<provider>_<dial>` form as well as the
+            // bare dial name, so the user can pass either).
+            if (ParamSelected(pretty) ||
+                ParamSelected(pname + "_" + pretty)) {
+              any_match = true; break;
+            }
+          } catch (...) {}
+        }
+        if (any_match) kept.push_back(pname);
+        else           gen_ps.erase(pname);
+      }
+      gen_ps.put_or_replace<std::vector<std::string>>("syst_providers", kept);
+      std::cerr << "[INFO]: -p filter kept " << kept.size() << " of "
+                << provider_names.size() << " providers ("
+                << (provider_names.size() - kept.size())
+                << " skipped -- neither constructed nor evaluated).\n";
+    }
+    phh.LoadProvidersAndHeaders(gen_ps);
   }
 
   TChain *gevs = new TChain("gtree");
@@ -790,26 +1183,47 @@ void FillFromGHEP(
     evars.coslep = FSLepP4.CosTheta();
     evars.EAvail = GetErecoil_MINERvA_LowRecoil(GenieGHep);
 
-    // FS particle loop: proton KE / |p|, multiplicities
+    // Bjorken x with q0 -> 0 guard.
+    {
+      double safe_q0 = (evars.q0 > 1e-9) ? evars.q0 : 1e-9;
+      evars.Bjorken_x = evars.Q2 / (2.0 * MN * safe_q0);
+    }
+    // pL / pT relative to the IS-neutrino direction.
+    {
+      TVector3 nuDir = ISLepP4.Vect();
+      double nu_mag = nuDir.Mag();
+      if (nu_mag > 1e-9) {
+        nuDir *= 1.0 / nu_mag;
+        TVector3 lp = FSLepP4.Vect();
+        double pL = lp.Dot(nuDir);
+        double pmag = lp.Mag();
+        double pT2 = std::max(0.0, pmag * pmag - pL * pL);
+        evars.plep_L = pL;
+        evars.plep_T = std::sqrt(pT2);
+      } else {
+        evars.plep_L = evars.plep;
+        evars.plep_T = 0.0;
+      }
+    }
+
+    // FS particle loop: proton KE & |p|, multiplicities
     evars.has_leading_proton = false;
     evars.leading_proton_KE = -999;
-    evars.leading_proton_p = -999;
+    evars.leading_proton_p  = -999;
     evars.nproton = 0; evars.npip = 0; evars.npim = 0; evars.npi0 = 0; evars.nneutron = 0;
     genie::GHepParticle *p = nullptr;
     TIter iter(&GenieGHep);
     double max_pKE = -1;
+    double max_pp  = -1;
     while ((p = dynamic_cast<genie::GHepParticle*>(iter.Next()))) {
       if (p->Status() != genie::kIStStableFinalState) continue;
       int pdgc = p->Pdg();
       if (pdgc == 2212) {
         evars.nproton++;
         double ke = p->KinE();
-        if (ke > max_pKE) {
-          max_pKE = ke;
-          evars.has_leading_proton = true;
-          evars.leading_proton_KE = ke;
-          evars.leading_proton_p  = p->P4()->Vect().Mag();
-        }
+        if (ke > max_pKE) { max_pKE = ke; evars.has_leading_proton = true; evars.leading_proton_KE = ke; }
+        double pmag = p->P4()->Vect().Mag();
+        if (pmag > max_pp) { max_pp = pmag; evars.leading_proton_p = pmag; }
       }
       else if (pdgc ==  211) evars.npip++;
       else if (pdgc == -211) evars.npim++;
@@ -821,28 +1235,6 @@ void FillFromGHEP(
     evars.pmiss = GetPmiss(GenieGHep, false);
     double Elep = std::sqrt(evars.plep * evars.plep + 0.10566 * 0.10566);
     evars.Ereco_cal = evars.EAvail + Elep;
-
-    // Bjorken x and lepton momentum projections.
-    {
-      double safe_q0 = (evars.q0 > 1e-9) ? evars.q0 : 1e-9;
-      evars.Bjorken_x = evars.Q2 / (2.0 * MN * safe_q0);
-    }
-    {
-      TVector3 nuDir = ISLepP4.Vect();
-      double nu_mag  = nuDir.Mag();
-      if (nu_mag > 1e-9) {
-        nuDir *= 1.0 / nu_mag;
-        TVector3 lp   = FSLepP4.Vect();
-        double pL     = lp.Dot(nuDir);
-        double pmag   = lp.Mag();
-        double pT2    = std::max(0.0, pmag * pmag - pL * pL);
-        evars.plep_L  = pL;
-        evars.plep_T  = std::sqrt(pT2);
-      } else {
-        evars.plep_L = -999;
-        evars.plep_T = -999;
-      }
-    }
 
     evars.is_cc = GenieGHep.Summary()->ProcInfo().IsWeakCC();
     evars.is_qe = GenieGHep.Summary()->ProcInfo().IsQuasiElastic();
@@ -878,6 +1270,10 @@ void FillFromGHEP(
 
       auto &var_hists = allhists[chkey][gp.meta.fullname];
       for (auto &vd : vars) {
+        // Formula vars require a TTree behind them; GHEP mode reads
+        // genie::EventRecord directly and has no tree to bind to. Skip with
+        // a one-time warning (issued from main before the loop starts).
+        if (!vd.formula.empty()) continue;
         double x = GetVarValue(evars, vd.branch);
         if (x <= -999) continue;
         auto vit = var_hists.find(vd.branch);
@@ -895,12 +1291,21 @@ void FillFromGHEP(
 }
 
 // ===== Scale histograms to differential xsec ===============================
-void ScaleToDiffXsec(HistMap &allhists) {
+// Per-event xsec values were summed into each bin during the fill pass.
+// To turn that into the canonical differential cross section per nucleus,
+// divide by:
+//   * the total number of events processed (so the average per event is the
+//     true sigma_tot for the channel) and
+//   * the bin width (so dsigma/dx is a density).
+// The factor sums to:  bin = (1/N_events) * Sum(xsec * w) / dx,  units
+// cm^2 / (x-axis unit) per nucleus -- which is what BuildYAxisTitle reports.
+void ScaleToDiffXsec(HistMap &allhists, size_t n_events_processed) {
+  double inv_n = (n_events_processed > 0) ? 1.0 / double(n_events_processed) : 1.0;
   for (auto &[ch, param_map] : allhists)
     for (auto &[par, var_map] : param_map)
       for (auto &[var, sh] : var_map) {
-        sh.h_cv->Scale(1.0, "width");
-        for (auto *h : sh.h_var) h->Scale(1.0, "width");
+        sh.h_cv->Scale(inv_n, "width");
+        for (auto *h : sh.h_var) h->Scale(inv_n, "width");
       }
 }
 
@@ -964,14 +1369,31 @@ void PruneTrivialParams(HistMap &allhists) {
 }
 
 // ===== Color palette =======================================================
-void GetVarColor(int ivar, int &color, int &style) {
-  static const int palette[] = {
-    kBlue+2, kBlue, kAzure+7, kGreen+3, kSpring+4,
-    kOrange+7, kRed, kRed+2, kMagenta+2, kViolet+1
+// Diverging blue (negative variations) → grey (CV / 0) → red (positive),
+// chosen to be readable for protanopia / deuteranopia (blue vs red is
+// preserved under both). Shades deepen with |variation|; values beyond
+// ±3 saturate at the extreme shade.
+void GetVarColor(double var_value, int &color, int &style) {
+  style = 1;  // solid line -- color is the only differentiator
+  if (std::abs(var_value) < 1e-9) {
+    color = TColor::GetColor("#404040");  // dark grey for the 0-σ sample
+    return;
+  }
+  // Three-class blue / red shades, lightest at |1σ|, darkest at |3σ|.
+  // The hex values are from a ColorBrewer RdBu 7-class diverging palette.
+  static const int blue_shades[] = {
+    TColor::GetColor("#4393C3"),   // |var| ≈ 1
+    TColor::GetColor("#2166AC"),   // |var| ≈ 2
+    TColor::GetColor("#053061"),   // |var| ≥ 3
   };
-  static const int npal = sizeof(palette) / sizeof(palette[0]);
-  color = palette[ivar % npal];
-  style = 1 + (ivar / npal);
+  static const int red_shades[] = {
+    TColor::GetColor("#F4A582"),   // |var| ≈ 1
+    TColor::GetColor("#D6604D"),   // |var| ≈ 2
+    TColor::GetColor("#B2182B"),   // |var| ≥ 3
+  };
+  double a = std::abs(var_value);
+  int idx = (a >= 3.0) ? 2 : (a >= 2.0) ? 1 : 0;
+  color = (var_value < 0) ? blue_shades[idx] : red_shades[idx];
 }
 
 // ===== Summary page ========================================================
@@ -1089,7 +1511,7 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
       if (page_vars.empty()) continue;
 
       // Split into pages of max 6 plots each
-      const int max_per_page = 6;
+      const int max_per_page = cliopts::plots_per_page;
       int total_vars = (int)page_vars.size();
       int npages = (total_vars + max_per_page - 1) / max_per_page;
 
@@ -1140,7 +1562,8 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
       for (int i = 0; i < nvar; ++i) {
         TH1D *hl = new TH1D(Form("hleg_%d_%d", hleg_uid, i), "", 1, 0, 1);
         int col_i, sty;
-        GetVarColor(i, col_i, sty);
+        double vval = (i < (int)sh_first.tweakvals.size()) ? sh_first.tweakvals[i] : 0;
+        GetVarColor(vval, col_i, sty);
         hl->SetLineColor(col_i); hl->SetLineWidth(2); hl->SetLineStyle(sty);
         std::string lbl = (i < (int)sh_first.tweakvals.size()) ? Form("%.3g", sh_first.tweakvals[i]) : Form("var%d", i);
         leg->AddEntry(hl, lbl.c_str(), "l");
@@ -1150,7 +1573,9 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
 
       // Grid of panels
       c->cd();
-      double grid_top = 0.88, grid_bot = 0.0;
+      // grid_bot bumped from 0.0 -> 0.04 so the bottom row's x-axis label
+      // doesn't sit flush against the canvas edge and get clipped.
+      double grid_top = 0.88, grid_bot = 0.04;
       double row_h = (grid_top - grid_bot) / nrows;
       double col_w = 1.0 / ncols;
       double ratio_frac = 0.30;
@@ -1172,8 +1597,12 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
         // Main pad
         c->cd();
         TPad *pmain = new TPad(Form("m%d", iv), "", x1, y_split, x2, y_top);
-        pmain->SetBottomMargin(0.01); pmain->SetTopMargin(0.04);
-        pmain->SetLeftMargin(0.16); pmain->SetRightMargin(0.03);
+        // TopMargin bumped from 0.04 -> 0.09 to keep the y-axis title's
+        // tallest characters (superscripts in d#sigma/dQ^{2}, etc.) inside
+        // the pad. LeftMargin bumped 0.16 -> 0.18 for the same reason on
+        // the title's outer edge.
+        pmain->SetBottomMargin(0.01); pmain->SetTopMargin(0.09);
+        pmain->SetLeftMargin(0.18); pmain->SetRightMargin(0.03);
         pmain->Draw(); pmain->cd();
 
         double ymax = sh.h_cv->GetMaximum();
@@ -1183,8 +1612,8 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
         frame->Reset();
         frame->SetMaximum(ymax * 1.35); frame->SetMinimum(0);
         frame->GetXaxis()->SetLabelSize(0); frame->GetXaxis()->SetTickLength(0.03);
-        frame->GetYaxis()->SetTitle(vd.diffLabel.c_str());
-        frame->GetYaxis()->SetTitleSize(0.07); frame->GetYaxis()->SetTitleOffset(1.1);
+        frame->GetYaxis()->SetTitle(BuildYAxisTitle(vd).c_str());
+        frame->GetYaxis()->SetTitleSize(0.06); frame->GetYaxis()->SetTitleOffset(1.25);
         frame->GetYaxis()->SetLabelSize(0.06);
         frame->Draw("AXIS");
 
@@ -1193,7 +1622,8 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
 
         for (int i = 0; i < (int)sh.h_var.size(); ++i) {
           int col_i, sty;
-          GetVarColor(i, col_i, sty);
+          double vval = (i < (int)sh.tweakvals.size()) ? sh.tweakvals[i] : 0;
+          GetVarColor(vval, col_i, sty);
           sh.h_var[i]->SetLineColor(col_i);
           sh.h_var[i]->SetLineWidth(2);
           sh.h_var[i]->SetLineStyle(sty);
@@ -1228,29 +1658,32 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
           }
         }
 
-        // Draw stats box in upper-left of main pad
+        // Draw stats box in upper-left of main pad. NDC y values stay inside
+        // the data area (top margin is 0.09 -> data area top is NDC 0.91).
+        // Text size kept small so the lines don't overrun the pad width when
+        // there are 3 columns per page.
         TLatex stats;
         stats.SetNDC();
-        stats.SetTextSize(0.055);
+        stats.SetTextSize(0.045);
         stats.SetTextFont(42);
         stats.SetTextAlign(13); // top-left
-        stats.DrawLatex(0.19, 0.92,
-                         Form("#chi^{2}_{max} / ndf = %.2f / %d",
+        stats.DrawLatex(0.21, 0.88,
+                         Form("#chi^{2}_{max}/ndf = %.2f / %d",
                               max_chi2, ndf_at_max));
-        stats.DrawLatex(0.19, 0.85,
+        stats.DrawLatex(0.21, 0.82,
                          Form("max|#Delta|/CV = %.1f%%", max_frac_shift * 100));
 
         // Ratio pad
         c->cd();
         TPad *pratio = new TPad(Form("r%d", iv), "", x1, y_bot, x2, y_split);
         pratio->SetTopMargin(0.01); pratio->SetBottomMargin(0.30);
-        pratio->SetLeftMargin(0.16); pratio->SetRightMargin(0.03);
+        pratio->SetLeftMargin(0.18); pratio->SetRightMargin(0.03);
         pratio->Draw(); pratio->cd();
 
         TH1D *rframe = (TH1D *)sh.h_cv->Clone(Form("rf%d", iv));
         rframe->Reset();
         rframe->SetMaximum(0.5); rframe->SetMinimum(-0.5);
-        rframe->GetXaxis()->SetTitle(vd.label.c_str());
+        rframe->GetXaxis()->SetTitle(BuildXAxisTitle(vd).c_str());
         rframe->GetXaxis()->SetTitleSize(0.14); rframe->GetXaxis()->SetTitleOffset(0.9);
         rframe->GetXaxis()->SetLabelSize(0.12);
         rframe->GetYaxis()->SetTitle("#frac{Var-CV}{CV}");
@@ -1267,8 +1700,19 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
           TH1D *rh = (TH1D *)sh.h_var[i]->Clone(Form("rh%d_%d", iv, i));
           rh->Add(sh.h_cv, -1.0);
           rh->Divide(sh.h_cv);
+          // Suppress ratio bins where the CV denominator is below the
+          // low-stats threshold -- the (var - CV)/CV blows up there and would
+          // visually swamp the panel. Drops the bin content + error so the
+          // line just doesn't render at that x position.
+          for (int b = 1; b <= rh->GetNbinsX(); ++b) {
+            if (sh.h_cv->GetBinContent(b) < cliopts::ratio_min_cv_count) {
+              rh->SetBinContent(b, 0);
+              rh->SetBinError(b, 0);
+            }
+          }
           int col_i, sty;
-          GetVarColor(i, col_i, sty);
+          double vval = (i < (int)sh.tweakvals.size()) ? sh.tweakvals[i] : 0;
+          GetVarColor(vval, col_i, sty);
           rh->SetLineColor(col_i); rh->SetLineWidth(2); rh->SetLineStyle(sty);
           rh->Draw("HIST SAME");
         }
@@ -1312,32 +1756,51 @@ void WriteROOT(const HistMap &allhists) {
 }
 
 // ===== main ================================================================
-namespace {
 constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
 constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
-} // namespace
 
 int main(int argc, char const *argv[]) {
   HandleOpts(argc, argv);
 
-  // Allow `-p ...` without `-c`: fall back to a cached inventory fcl from
-  // NUSYST_INVENTORY_FCL or a well-known default path.
-  if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
-    char const *env = std::getenv(kInventoryEnvVar);
-    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
-    std::cout << "[INFO]: -c not given; using cached inventory '"
-              << cliopts::fclname << "' to resolve -p selection." << std::endl;
-  }
+  // Raise ROOT's diagnostic threshold before any rendering happens. Without
+  // this, ROOT's TH1::Chi2TestX floods stdout with one "less than 10
+  // effective events" Info per low-stats page. Was previously only inside
+  // FillFromGHEP, so flat-tree mode missed it.
+  nusyst::quiet::SetGlobalQuiet();
+  // Hide the default ROOT stat box on every histogram. It otherwise sits in
+  // the upper-right corner and overlays the y-axis labels in tight panels.
+  gStyle->SetOptStat(0);
 
   if (cliopts::input_file.empty()) {
     std::cout << "[ERROR]: -i <input> is required." << std::endl;
     SayUsage(argv); return 1;
   }
 
+  // Cache fallback: -p without -c means "use the cached kitchen sink and
+  // filter to these dials". Same resolution + auto-generation as nusyst
+  // inventory / tweaks / response.
+  if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
+    char const *env = std::getenv(kInventoryEnvVar);
+    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
+      std::cerr << "[INFO]: -p was given without -c; auto-generating "
+                << cliopts::fclname << " via `nusyst config --mode all`.\n";
+      std::string cmd = "GenerateAllDialsConfigNuSyst --mode all -o " +
+                        cliopts::fclname + " > /dev/null 2>&1";
+      if (std::system(cmd.c_str()) != 0) {
+        std::cerr << "[ERROR]: Auto-generation failed; re-running visibly:\n";
+        std::system(("GenerateAllDialsConfigNuSyst --mode all -o " +
+                     cliopts::fclname).c_str());
+        return 3;
+      }
+    }
+  }
+
   // Resolve variables
   std::vector<VarDef> vars;
   if (cliopts::variables.empty()) {
-    for (auto &[key, vd] : kPredefinedVars) vars.push_back(vd);
+    EnsureRegistryInitialised();
+    for (auto &[key, vd] : g_vars_registry) vars.push_back(vd);
   } else {
     for (auto &v : cliopts::variables) vars.push_back(ResolveVar(v));
   }
@@ -1393,9 +1856,15 @@ int main(int argc, char const *argv[]) {
       meta_tree->ResetBranchAddresses();
     }
 
-    // Filter variables to those with existing branches (skip coslep etc.)
+    // Filter variables to those with existing branches (skip coslep etc.).
+    // Formula-backed vars skip this check -- they compose other branches via
+    // TTreeFormula and don't have a single backing branch to test for.
     std::vector<VarDef> valid_vars;
     for (auto &vd : vars) {
+      if (!vd.formula.empty()) {
+        valid_vars.push_back(vd);
+        continue;
+      }
       bool is_computed = (vd.branch == "leading_proton_KE" || vd.branch == "coslep");
       if (is_computed) {
         if (vd.branch == "leading_proton_KE" && flat_tree->GetBranch("fsprotons_KE"))
@@ -1416,6 +1885,19 @@ int main(int argc, char const *argv[]) {
                      allhists, counts);
   } else {
     std::cout << "Detected GHEP mode." << std::endl;
+    // Formula vars need a TTree backing them; warn once and let the per-event
+    // loop silently skip them.
+    std::vector<std::string> dropped;
+    for (auto const &vd : vars)
+      if (!vd.formula.empty()) dropped.push_back(vd.branch);
+    if (!dropped.empty()) {
+      std::cerr << "[WARN]: GHEP mode cannot evaluate TTreeFormula variables; "
+                   "skipping:\n        ";
+      for (auto const &n : dropped) std::cerr << n << " ";
+      std::cerr << "\n        Run `nusyst tweaks` first, then pass the "
+                   "resulting events tree as -i to use formula vars."
+                << std::endl;
+    }
     fin->Close(); delete fin; fin = nullptr;
     if (cliopts::fclname.empty()) {
       std::cout << "[ERROR]: GHEP mode requires -c <config.fcl>" << std::endl;
@@ -1431,7 +1913,7 @@ int main(int argc, char const *argv[]) {
     return 4;
   }
 
-  ScaleToDiffXsec(allhists);
+  ScaleToDiffXsec(allhists, counts.total);
 
   // Build inclusive channels: total CC, total NC, total
   // by merging per-channel histograms
