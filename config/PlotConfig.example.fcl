@@ -72,11 +72,13 @@ plot_config: {
   # Number of (variable, channel) panels per PDF page. Default: 6 (3x2 grid).
   plots_per_page: 6
 
-  # Ratio-panel low-statistics suppression. Bins whose CV count is below this
-  # threshold are blanked in the (var/CV - 1) ratio panel so a near-zero
-  # denominator doesn't spike the y-axis. NIWG's `min_event_rate`. Default 0
-  # (no suppression).
-  ratio_min_cv_count: 5.0
+  # Ratio-panel low-statistics suppression as a FRACTION OF PEAK CV.
+  # Bins whose CV is below ratio_min_cv_count * peak_CV are blanked in the
+  # (var/CV - 1) ratio panel so a near-zero denominator doesn't spike the
+  # y-axis. Scale-invariant (the histograms are scaled to differential
+  # xsec, so an absolute event-count threshold would never trigger).
+  # Default 0 (no suppression). 0.01 = blank tail bins below 1% of peak.
+  ratio_min_cv_count: 0.01
 
   # ---- 1. Override the built-in Q2 binning ---------------------------------
   Q2: {

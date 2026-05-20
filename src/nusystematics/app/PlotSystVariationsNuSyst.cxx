@@ -583,8 +583,20 @@ void HandleOpts(int argc, char const *argv[]) {
     else if (s == "--no-pdf") cliopts::make_pdf = false;
     else if (s == "--no-root") cliopts::make_root = false;
     else if (s == "-v") {
-      std::string tok; std::istringstream ss(argv[++opt]);
-      while (std::getline(ss, tok, ',')) if (!tok.empty()) cliopts::variables.push_back(tok);
+      // Two accepted forms:
+      //   1. Plain comma-separated list of variable names: -v Q2,W,Enu
+      //   2. Single inline-formula spec:                  -v "name:Form:xmin,xmax[,nbins]"
+      // Form 2 contains commas inside the range triple; splitting the whole
+      // arg on commas would shred it. Detect form 2 by the presence of a
+      // colon and treat the whole arg as a single spec. Multiple inline
+      // formulas: pass -v multiple times.
+      std::string arg = argv[++opt];
+      if (arg.find(':') != std::string::npos) {
+        cliopts::variables.push_back(arg);
+      } else {
+        std::string tok; std::istringstream ss(arg);
+        while (std::getline(ss, tok, ',')) if (!tok.empty()) cliopts::variables.push_back(tok);
+      }
     } else if (s == "-p") {
       std::string tok; std::istringstream ss(argv[++opt]);
       while (std::getline(ss, tok, ',')) if (!tok.empty()) cliopts::parameters.push_back(tok);
@@ -1809,6 +1821,10 @@ inline int IndexClosestTo(const std::vector<double> &tweakvals, double target) {
 void Make2DPlots(const Hist2DMap &allhists2d,
                  const std::vector<Var2DPair> &pairs,
                  size_t n_events_processed) {
+  // Same monotonic-counter trick as MakePlots: avoids gDirectory name
+  // collisions across (channel, dial, page, row) iterations that would
+  // otherwise cause Clone() to silently reuse a stale histogram.
+  static int g_panel_2d_uid = 0;
   std::string pdfname = cliopts::output_base + ".pdf";
   TCanvas *c = new TCanvas("c2dplots", "", 1400, 1000);
   // Suppress the default ROOT stat box on every histogram drawn from here
@@ -1914,30 +1930,37 @@ void Make2DPlots(const Hist2DMap &allhists2d,
           pL->SetLeftMargin(0.17); pL->SetRightMargin(0.16);
           pL->Draw(); pL->cd();
           if (im >= 0 && im < (int)sh.h_var.size() && sh.h_var[im]) {
-            TH2D *rL = (TH2D*)sh.h_var[im]->Clone(Form("rL_%d_%d", ipage, row));
+            int uid2d = ++g_panel_2d_uid;
+            TH2D *rL = (TH2D*)sh.h_var[im]->Clone(Form("rL_%d", uid2d));
             rL->Add(sh.h_cv, -1.0);
             rL->Divide(sh.h_cv);
             // Zero bins where either:
-            //   - the CV denominator has no events (the ratio is meaningless;
+            //   - the CV denominator has no events (ratio meaningless;
             //     TH2::Divide can leak a coloured speckle on empty regions),
-            //   - the CV is below `ratio_min_cv_count` (low-stats noise),
+            //   - the CV is below ratio_min_cv_count * peak_CV (low-stats noise),
             //   - the ratio itself is non-finite (NaN / Inf safety net).
-            // Setting content & error to 0 maps the bin to z=0 = palette
-            // midpoint = pure white on the diverging palette.
-            for (int bx = 1; bx <= rL->GetNbinsX(); ++bx) {
-              for (int by = 1; by <= rL->GetNbinsY(); ++by) {
-                double _cv = sh.h_cv->GetBinContent(bx, by);
-                double _r  = rL->GetBinContent(bx, by);
-                if (_cv <= 0 || _cv < cliopts::ratio_min_cv_count ||
-                    !std::isfinite(_r)) {
-                  rL->SetBinContent(bx, by, 0);
-                  rL->SetBinError(bx, by, 0);
+            // ratio_min_cv_count is a FRACTION OF PEAK (scale-invariant).
+            {
+              double _peak = sh.h_cv->GetMaximum();
+              double _thresh = _peak * cliopts::ratio_min_cv_count;
+              for (int bx = 1; bx <= rL->GetNbinsX(); ++bx) {
+                for (int by = 1; by <= rL->GetNbinsY(); ++by) {
+                  double _cv = sh.h_cv->GetBinContent(bx, by);
+                  double _r  = rL->GetBinContent(bx, by);
+                  if (_cv <= 0 || _cv < _thresh || !std::isfinite(_r)) {
+                    rL->SetBinContent(bx, by, 0);
+                    rL->SetBinError(bx, by, 0);
+                  }
                 }
               }
             }
+            // Clamp the colourbar range to [0.05, 5.0] so a single low-stats
+            // bin with a huge ratio doesn't drive zmax to e.g. 100 and squash
+            // every other bin to near-white. Same logic as the 1D ratio panel.
             double zmax = std::max(std::abs(rL->GetMinimum()),
                                    std::abs(rL->GetMaximum()));
-            if (zmax > 1e-9) { rL->SetMinimum(-zmax); rL->SetMaximum(+zmax); }
+            zmax = std::min(std::max(zmax, 0.05), 5.0);
+            rL->SetMinimum(-zmax); rL->SetMaximum(+zmax);
             rL->SetTitle(Form("(%.2f#sigma - CV)/CV", tw_m));
             rL->GetXaxis()->SetTitle(BuildXAxisTitle(x_vd).c_str());
             rL->GetYaxis()->SetTitle(BuildXAxisTitle(y_vd).c_str());
@@ -1961,7 +1984,8 @@ void Make2DPlots(const Hist2DMap &allhists2d,
           pM->SetTopMargin(0.10); pM->SetBottomMargin(0.18);
           pM->SetLeftMargin(0.17); pM->SetRightMargin(0.16);
           pM->Draw(); pM->cd();
-          TH2D *cv_scaled = (TH2D*)sh.h_cv->Clone(Form("cv_%d_%d", ipage, row));
+          int uid2d_cv = ++g_panel_2d_uid;
+          TH2D *cv_scaled = (TH2D*)sh.h_cv->Clone(Form("cv_%d", uid2d_cv));
           // Match the 1D ScaleToDiffXsec convention: divide by N_events and
           // by bin area (Scale "width" handles both x and y widths).
           cv_scaled->Scale(inv_n, "width");
@@ -1990,7 +2014,8 @@ void Make2DPlots(const Hist2DMap &allhists2d,
           pR->SetLeftMargin(0.17); pR->SetRightMargin(0.16);
           pR->Draw(); pR->cd();
           if (ip_sig >= 0 && ip_sig < (int)sh.h_var.size() && sh.h_var[ip_sig]) {
-            TH2D *rR = (TH2D*)sh.h_var[ip_sig]->Clone(Form("rR_%d_%d", ipage, row));
+            int uid2d_R = ++g_panel_2d_uid;
+            TH2D *rR = (TH2D*)sh.h_var[ip_sig]->Clone(Form("rR_%d", uid2d_R));
             rR->Add(sh.h_cv, -1.0);
             rR->Divide(sh.h_cv);
             // See the left-panel block above for rationale.
@@ -1998,8 +2023,8 @@ void Make2DPlots(const Hist2DMap &allhists2d,
               for (int by = 1; by <= rR->GetNbinsY(); ++by) {
                 double _cv = sh.h_cv->GetBinContent(bx, by);
                 double _r  = rR->GetBinContent(bx, by);
-                if (_cv <= 0 || _cv < cliopts::ratio_min_cv_count ||
-                    !std::isfinite(_r)) {
+                double _thresh_R = sh.h_cv->GetMaximum() * cliopts::ratio_min_cv_count;
+                if (_cv <= 0 || _cv < _thresh_R || !std::isfinite(_r)) {
                   rR->SetBinContent(bx, by, 0);
                   rR->SetBinError(bx, by, 0);
                 }
@@ -2007,7 +2032,8 @@ void Make2DPlots(const Hist2DMap &allhists2d,
             }
             double zmax = std::max(std::abs(rR->GetMinimum()),
                                    std::abs(rR->GetMaximum()));
-            if (zmax > 1e-9) { rR->SetMinimum(-zmax); rR->SetMaximum(+zmax); }
+            zmax = std::min(std::max(zmax, 0.05), 5.0);
+            rR->SetMinimum(-zmax); rR->SetMaximum(+zmax);
             rR->SetTitle(Form("(+%.2f#sigma - CV)/CV", tw_p));
             rR->GetXaxis()->SetTitle(BuildXAxisTitle(x_vd).c_str());
             rR->GetYaxis()->SetTitle(BuildXAxisTitle(y_vd).c_str());
@@ -2158,9 +2184,19 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
         double y_bot = y_top - row_h;
         double y_split = y_bot + row_h * ratio_frac;
 
+        // Pad and clone names use a monotonically-increasing global counter
+        // so they never collide across pages, channels, or dials. ROOT
+        // registers Clone'd histograms in gDirectory; TCanvas::Clear() does
+        // not delete them, so reusing a name like "rh0_0" on a later page
+        // causes the new Clone to silently reuse the OLD histogram (with
+        // stale data) and the new ratio panel ends up empty. Was visible
+        // most readily on multi-dial multi-channel runs through --plot-config.
+        static int g_panel_uid = 0;
+        int uid = ++g_panel_uid;
+
         // Main pad
         c->cd();
-        TPad *pmain = new TPad(Form("m%d", iv), "", x1, y_split, x2, y_top);
+        TPad *pmain = new TPad(Form("m_%d", uid), "", x1, y_split, x2, y_top);
         // TopMargin bumped from 0.04 -> 0.09 to keep the y-axis title's
         // tallest characters (superscripts in d#sigma/dQ^{2}, etc.) inside
         // the pad. LeftMargin bumped 0.16 -> 0.18 for the same reason on
@@ -2172,7 +2208,8 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
         double ymax = sh.h_cv->GetMaximum();
         for (auto *h : sh.h_var) ymax = std::max(ymax, h->GetMaximum());
 
-        TH1D *frame = (TH1D *)sh.h_cv->Clone(Form("f%d", iv));
+        TH1D *frame = (TH1D *)sh.h_cv->Clone(Form("f_%d", uid));
+        frame->SetDirectory(nullptr);
         frame->Reset();
         frame->SetMaximum(ymax * 1.35); frame->SetMinimum(0);
         frame->GetXaxis()->SetLabelSize(0); frame->GetXaxis()->SetTickLength(0.03);
@@ -2239,14 +2276,35 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
 
         // Ratio pad
         c->cd();
-        TPad *pratio = new TPad(Form("r%d", iv), "", x1, y_bot, x2, y_split);
+        TPad *pratio = new TPad(Form("r_%d", uid), "", x1, y_bot, x2, y_split);
         pratio->SetTopMargin(0.01); pratio->SetBottomMargin(0.30);
         pratio->SetLeftMargin(0.18); pratio->SetRightMargin(0.03);
         pratio->Draw(); pratio->cd();
 
-        TH1D *rframe = (TH1D *)sh.h_cv->Clone(Form("rf%d", iv));
+        TH1D *rframe = (TH1D *)sh.h_cv->Clone(Form("rf_%d", uid));
+        rframe->SetDirectory(nullptr);
         rframe->Reset();
-        rframe->SetMaximum(0.5); rframe->SetMinimum(-0.5);
+        // Adaptive ratio y-range from bins around the CV peak (where the
+        // most events are, hence the most physically meaningful variation):
+        // max |ratio| across every variation, restricted to bins with
+        // CV >= 30% of peak CV. Drops low-stat tail bins that produce huge
+        // ratios from a near-zero denominator. Clamped to [0.05, 5.0].
+        double cv_peak = sh.h_cv->GetMaximum();
+        double cv_floor = cv_peak * 0.30;
+        double zmax_obs = 0.0;
+        for (int i = 0; i < (int)sh.h_var.size(); ++i) {
+          for (int b = 1; b <= sh.h_var[i]->GetNbinsX(); ++b) {
+            double cv = sh.h_cv->GetBinContent(b);
+            if (cv <= 0 || cv < cv_floor) continue;
+            double v  = sh.h_var[i]->GetBinContent(b);
+            double r  = (v - cv) / cv;
+            if (!std::isfinite(r)) continue;
+            double ar = std::abs(r);
+            if (ar > zmax_obs) zmax_obs = ar;
+          }
+        }
+        double zmax = std::min(std::max(zmax_obs * 1.25, 0.05), 5.0);
+        rframe->SetMaximum(+zmax); rframe->SetMinimum(-zmax);
         rframe->GetXaxis()->SetTitle(BuildXAxisTitle(vd).c_str());
         rframe->GetXaxis()->SetTitleSize(0.14); rframe->GetXaxis()->SetTitleOffset(0.9);
         rframe->GetXaxis()->SetLabelSize(0.12);
@@ -2260,18 +2318,26 @@ void MakePlots(const HistMap &allhists, const std::vector<VarDef> &vars) {
                                  rframe->GetXaxis()->GetXmax(), 0);
         zero->SetLineStyle(2); zero->SetLineColor(kGray + 1); zero->Draw();
 
+        // ratio_min_cv_count is interpreted as a FRACTION OF PEAK CV (not a
+        // raw event count) so it's scale-invariant. After ScaleToDiffXsec
+        // the h_cv bin contents are in differential-xsec units (~1e-38), so
+        // comparing against a literal event-count threshold would zero
+        // every bin and wipe the ratio lines.
+        double cv_peak_for_supp = sh.h_cv->GetMaximum();
+        double cv_supp_thresh = cv_peak_for_supp * cliopts::ratio_min_cv_count;
         for (int i = 0; i < (int)sh.h_var.size(); ++i) {
-          TH1D *rh = (TH1D *)sh.h_var[i]->Clone(Form("rh%d_%d", iv, i));
+          TH1D *rh = (TH1D *)sh.h_var[i]->Clone(Form("rh_%d_%d", uid, i));
+          rh->SetDirectory(nullptr);
           rh->Add(sh.h_cv, -1.0);
           rh->Divide(sh.h_cv);
-          // Suppress ratio bins where the CV denominator is below the
-          // low-stats threshold -- the (var - CV)/CV blows up there and would
-          // visually swamp the panel. Drops the bin content + error so the
-          // line just doesn't render at that x position.
-          for (int b = 1; b <= rh->GetNbinsX(); ++b) {
-            if (sh.h_cv->GetBinContent(b) < cliopts::ratio_min_cv_count) {
-              rh->SetBinContent(b, 0);
-              rh->SetBinError(b, 0);
+          // Suppress ratio bins where CV < ratio_min_cv_count * peak_CV.
+          // Default ratio_min_cv_count = 0 means no suppression.
+          if (cv_supp_thresh > 0) {
+            for (int b = 1; b <= rh->GetNbinsX(); ++b) {
+              if (sh.h_cv->GetBinContent(b) < cv_supp_thresh) {
+                rh->SetBinContent(b, 0);
+                rh->SetBinError(b, 0);
+              }
             }
           }
           int col_i, sty;
@@ -2321,7 +2387,18 @@ void WriteROOT(const HistMap &allhists) {
 
 // ===== main ================================================================
 constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
-constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+
+std::string InventoryDefaultPath() {
+#ifdef NUSYST_INSTALL_PREFIX
+  return std::string(NUSYST_INSTALL_PREFIX) + "/fcl/nusyst_inventory.fcl";
+#else
+  for (char const *var : {"nusystematics_ROOT", "NUSYST"}) {
+    char const *val = std::getenv(var);
+    if (val && *val) return std::string(val) + "/fcl/nusyst_inventory.fcl";
+  }
+  return "/tmp/nusyst_inventory.fcl";
+#endif
+}
 
 int main(int argc, char const *argv[]) {
   HandleOpts(argc, argv);
@@ -2345,7 +2422,7 @@ int main(int argc, char const *argv[]) {
   // inventory / tweaks / response.
   if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
     char const *env = std::getenv(kInventoryEnvVar);
-    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    cliopts::fclname = (env && *env) ? std::string(env) : InventoryDefaultPath();
     if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
       std::cerr << "[INFO]: -p was given without -c; auto-generating "
                 << cliopts::fclname << " via `nusyst config --mode all`.\n";
