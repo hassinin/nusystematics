@@ -71,10 +71,22 @@ int lookup_policy = 1;
 
 // Cache-resolution constants mirror those in DeclaredDialTestNuSyst so the
 // two tools share the same auto-generation behaviour: if no -c is passed,
-// fall back to $NUSYST_INVENTORY_FCL and then /tmp/nusyst_inventory.fcl,
-// auto-generating via GenerateAllDialsConfigNuSyst on first use.
+// fall back to $NUSYST_INVENTORY_FCL and then $nusystematics_ROOT/fcl/
+// nusyst_inventory.fcl (then $NUSYST/fcl/..., then /tmp/...), auto-
+// generating via GenerateAllDialsConfigNuSyst on first use.
 constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
-constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+
+std::string InventoryDefaultPath() {
+#ifdef NUSYST_INSTALL_PREFIX
+  return std::string(NUSYST_INSTALL_PREFIX) + "/fcl/nusyst_inventory.fcl";
+#else
+  for (char const *var : {"nusystematics_ROOT", "NUSYST"}) {
+    char const *val = std::getenv(var);
+    if (val && *val) return std::string(val) + "/fcl/nusyst_inventory.fcl";
+  }
+  return "/tmp/nusyst_inventory.fcl";
+#endif
+}
 
 // Returns true if `name` matches any substring in cliopts::parameters, or
 // if the filter is empty (no filter = keep everything).
@@ -426,8 +438,9 @@ void SayUsage(char const *argv[]) {
                "\t                   format, i.e. the output of\n"
                "\t                   `nusyst config`). Optional: if omitted,\n"
                "\t                   resolves to $NUSYST_INVENTORY_FCL\n"
-               "\t                   then /tmp/nusyst_inventory.fcl, auto-\n"
-               "\t                   generating via `nusyst config` if absent.\n"
+               "\t                   then $NUSYST/fcl/nusyst_inventory.fcl,\n"
+               "\t                   auto-generating via `nusyst config`\n"
+               "\t                   if absent.\n"
                "\t-p <par1,par2,...>: Filter to dials whose prettyName\n"
                "\t                   contains any of the comma-separated\n"
                "\t                   substrings. Providers whose dials all\n"
@@ -568,7 +581,7 @@ int RunSerial() {
   // pre-existing "no reweights" behaviour for backwards compatibility.
   if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
     char const *env = std::getenv(kInventoryEnvVar);
-    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    cliopts::fclname = (env && *env) ? std::string(env) : InventoryDefaultPath();
     if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
       std::cerr << "[INFO]: -p was given without -c; auto-generating "
                 << cliopts::fclname << " via `nusyst config --mode all`.\n";
@@ -595,6 +608,19 @@ int RunSerial() {
   }
 
   nusyst::quiet::SetGlobalQuiet();
+
+  // Silence GENIE's banner + NOTICE chatter unconditionally. The event loop
+  // touches GENIE per event (NeutReactionCode, ProcInfo, ...) regardless of
+  // whether we're running reweights, and the very first GENIE call triggers
+  // Messenger::Instance() which prints the multi-screen banner. Wrap that
+  // first touch in a StdoutSink and raise NOTICE+ to WARN so the per-event
+  // GHepUtils notices stop printing.
+  {
+    nusyst::quiet::StdoutSink _quiet;
+    genie::Messenger::Instance()->SetPrioritiesFromXmlFile(
+        "Messenger_whisper.xml");
+  }
+
   response_helper phh;
   std::map<std::string, std::vector<std::string>> applies_to_channels;
   size_t n_filtered_providers = 0;
@@ -724,8 +750,20 @@ int RunSerial() {
   tst.AddBranches(phh);
 
   size_t NToRead = std::min(NEvs, cliopts::NMax);
-  size_t NToShout = NToRead / 20;
+  // Progress every 5% of events, capped at 1000 so big runs don't go
+  // silent for a minute+ between prints (FSI dials are ~20 ms/event and
+  // a NToRead/20 stride at 100k = 5000 events = ~90 s between updates).
+  size_t NToShout = std::min<size_t>(NToRead / 20, 1000);
   NToShout = NToShout ? NToShout : 1;
+
+  // Silence GENIE Reweight engines' direct-cout chatter (FSI dials are the
+  // worst offenders) for the whole event loop in one shot. /dev/null is
+  // opened once here rather than re-opened per event -- the previous
+  // per-event StdoutSink scope made FrAbs_pi-style runs ~100x slower from
+  // the syscall storm. Progress prints already go to cerr, which the
+  // StdoutSink doesn't touch.
+  nusyst::quiet::StdoutSink _quiet_event_loop;
+
   for (size_t ev_it = cliopts::NSkip; ev_it < NToRead; ++ev_it) {
     // Start-of-event: reset tweak containers so later Add() fills cleanly.
     // (This does NOT touch physics scalars like w, q0, Q2.)
@@ -1017,8 +1055,12 @@ int RunSerial() {
 
     // In multi-process mode only worker 0 prints progress (others would
     // interleave illegibly); single-process behaves as before.
+    // Progress goes to cerr so it survives the per-event StdoutSink that
+    // silences direct cout writes from the GENIE Reweight engines (FSI
+    // dials in particular dump per-event diagnostics through plain cout,
+    // bypassing the GENIE Messenger).
     if (cliopts::worker_id <= 0 && !(ev_it % NToShout)) {
-      std::cout << (ev_it ? "\r" : "") << "Event #" << ev_it << "/" << NToRead
+      std::cerr << (ev_it ? "\r" : "") << "Event #" << ev_it << "/" << NToRead
                 << ", Interaction: " << GenieGHep.Summary()->AsString()
                 << std::flush;
     }
@@ -1035,6 +1077,9 @@ int RunSerial() {
                            ? nusyst::channel::MakeChannelKey(GenieGHep)
                            : std::string{};
       auto &providers = phh.GetSystProvider();
+      // cout is already redirected to /dev/null by the loop-scope
+      // StdoutSink above, so direct cout writes from inside FSI / other
+      // reweight engines are silenced without per-event syscall cost.
       for (auto &sp : providers) {
         auto it = applies_to_channels.find(sp->GetFullyQualifiedName());
         bool applies = (it == applies_to_channels.end())

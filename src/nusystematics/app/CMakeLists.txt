@@ -9,13 +9,19 @@ GenerateAllDialsConfigNuSyst
 
 foreach(targ ${TARGETS_TO_BUILD})
   add_executable(${targ} ${targ}.cxx)
-  target_link_libraries(${targ} 
+  target_link_libraries(${targ}
     nusyst::systproviders
     nusyst::utility
     ${ROOT_LIBRARIES}
     ROOT::Geom
     ROOT::MathMore
   )
+  # Bake the install prefix in at compile time so InventoryDefaultPath()
+  # can resolve the kitchen-sink cache against the binary's OWN install,
+  # rather than against env vars (nusystematics_ROOT / NUSYST) that can be
+  # overwritten by other software's setup scripts.
+  target_compile_definitions(${targ} PRIVATE
+    NUSYST_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}")
 
 endforeach()
 

@@ -204,10 +204,22 @@ using ResponseMap = std::map<std::string, std::map<std::string, std::vector<std:
 
 // ===== Cache resolution + provider-level filter (shared with nusyst tweaks) =
 // If `-c` is omitted while `-p` is given, resolve fclname against the cached
-// kitchen-sink path ($NUSYST_INVENTORY_FCL then /tmp/nusyst_inventory.fcl),
-// auto-generating via `nusyst config` on first use.
+// kitchen-sink path: $NUSYST_INVENTORY_FCL, then $nusystematics_ROOT/fcl/
+// nusyst_inventory.fcl, then $NUSYST/fcl/..., then /tmp/...
+// Auto-generating via `nusyst config` on first use.
 constexpr const char *kInventoryEnvVar = "NUSYST_INVENTORY_FCL";
-constexpr const char *kInventoryDefaultPath = "/tmp/nusyst_inventory.fcl";
+
+std::string InventoryDefaultPath() {
+#ifdef NUSYST_INSTALL_PREFIX
+  return std::string(NUSYST_INSTALL_PREFIX) + "/fcl/nusyst_inventory.fcl";
+#else
+  for (char const *var : {"nusystematics_ROOT", "NUSYST"}) {
+    char const *val = std::getenv(var);
+    if (val && *val) return std::string(val) + "/fcl/nusyst_inventory.fcl";
+  }
+  return "/tmp/nusyst_inventory.fcl";
+#endif
+}
 
 // Returns true if `name` matches any substring in cliopts::parameters, or if
 // the filter is empty (no filter = keep everything).
@@ -226,7 +238,7 @@ int main(int argc, char const *argv[]) {
   // invocation. Same resolution + auto-generation as nusyst inventory / tweaks.
   if (cliopts::fclname.empty() && !cliopts::parameters.empty()) {
     char const *env = std::getenv(kInventoryEnvVar);
-    cliopts::fclname = (env && *env) ? env : kInventoryDefaultPath;
+    cliopts::fclname = (env && *env) ? std::string(env) : InventoryDefaultPath();
     if (::access(cliopts::fclname.c_str(), R_OK) != 0) {
       std::cerr << "[INFO]: -p was given without -c; auto-generating "
                 << cliopts::fclname << " via `nusyst config --mode all`.\n";

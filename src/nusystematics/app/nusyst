@@ -71,10 +71,18 @@ if ! binary=$(subcmd_map "$subcmd"); then
   exit 2
 fi
 
-if ! command -v "$binary" >/dev/null 2>&1; then
-  echo "nusyst: underlying binary '$binary' is not on PATH." >&2
-  echo "Did you source \$NUSYST/bin/setup.nusystematics.sh?" >&2
+# Dispatch by absolute path -- resolve the binary in the same directory as
+# this wrapper. This makes `nusyst` immune to PATH ordering: if two installs
+# (e.g. a shared EOS one and a local dev one) are both on PATH, the wrapper
+# always invokes its own sibling, never a same-named binary from a different
+# install.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+binary_path="${SCRIPT_DIR}/${binary}"
+
+if [ ! -x "$binary_path" ]; then
+  echo "nusyst: expected sibling binary not found or not executable:" >&2
+  echo "  ${binary_path}" >&2
   exit 127
 fi
 
-exec "$binary" "$@"
+exec "$binary_path" "$@"
