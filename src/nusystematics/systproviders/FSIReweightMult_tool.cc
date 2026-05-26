@@ -79,7 +79,6 @@ bool FSIReweightMult::SetupResponseCalculator(
 
 event_unit_response_t
 FSIReweightMult::GetEventResponse(genie::EventRecord const &ev) {
-
   // when the event is not applicable for this type of reweighting,
   // use GetDefaultEventResponse() to return an auto-1.-filled vector
 
@@ -209,7 +208,6 @@ FSIReweightMult::GetEventResponse(genie::EventRecord const &ev) {
       accept = true;
 
     if (!accept) continue;
-      
         //cout<<IShad->Name()<<": KEini "<<KEini<<"; Ehad "<<Ehad<<"; Ebias "<<Ebias<<endl;
         double this_reweight = fsiReweightCalculatorMult->GetFSIReweightMultSum(KEini, n_protons+n_neutrons, var, IShad->Pdg());
         double this_reweight2 = fsiReweightCalculatorMult->GetFSIReweightMultDiff(KEini, n_protons-n_neutrons, var, IShad->Pdg());

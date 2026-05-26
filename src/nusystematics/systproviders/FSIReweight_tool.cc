@@ -130,7 +130,6 @@ FSIReweight::GetEventResponse(genie::EventRecord const &ev) {
 
   // now make the output
   systtools::event_unit_response_t resp;
-
   SystParamHeader const &hdr = GetSystMetaData()[ResponseParameterIdx];
   resp.push_back( {hdr.systParamId, {}} );
   vector<int> npar_sel = {1, 0, 0, 0, 0}; // edit the number of {p, n, pip, pi0, pim} (temporarily added inline for test, should be added as parameters in fcl file)

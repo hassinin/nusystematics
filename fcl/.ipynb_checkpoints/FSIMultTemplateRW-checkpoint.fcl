@@ -60,43 +60,43 @@ generated_systematic_provider_configuration: {
                },
                {
                   input_hist: "hA2018_protonPlus_NuclDiff"
-                  name: "hist_nomDiff_protonPlus"
+                  name: "hist_nomNuclDiff_protonPlus"
                },
                {
                   input_hist: "Geant4_protonPlus_NuclDiff"
-                  name: "hist_altDiff_protonPlus"
+                  name: "hist_altNuclDiff_protonPlus"
                },
                {
                   input_hist: "hA2018_neutron_NuclDiff"
-                  name: "hist_nomDiff_neutron"
+                  name: "hist_nomNuclDiff_neutron"
                },
                {
                   input_hist: "Geant4_neutron_NuclDiff"
-                  name: "hist_altDiff_neutron"
+                  name: "hist_altNuclDiff_neutron"
                },
                {
                   input_hist: "hA2018_piPlus_NuclDiff"
-                  name: "hist_nomDiff_piPlus"
+                  name: "hist_nomNuclDiff_piPlus"
                },
                {
                   input_hist: "Geant4_piPlus_NuclDiff"
-                  name: "hist_altDiff_piPlus"
+                  name: "hist_altNuclDiff_piPlus"
                },
                {
                   input_hist: "hA2018_pi0_NuclDiff"
-                  name: "hist_nomDiff_pi0"
+                  name: "hist_nomNuclDiff_pi0"
                },
                {
                   input_hist: "Geant4_pi0_NuclDiff"
-                  name: "hist_altDiff_pi0"
+                  name: "hist_altNuclDiff_pi0"
                },
                {
                   input_hist: "hA2018_piMinus_NuclDiff"
-                  name: "hist_nomDiff_piMinus"
+                  name: "hist_nomNuclDiff_piMinus"
                },
                {
                   input_hist: "Geant4_piMinus_NuclDiff"
-                  name: "hist_altDiff_piMinus"
+                  name: "hist_altNuclDiff_piMinus"
                }
             ]
          }
@@ -166,43 +166,43 @@ generated_systematic_provider_configuration: {
                },
                {
                   input_hist: "hA2018_protonPlus_NuclDiff"
-                  name: "hist_nomDiff_protonPlus"
+                  name: "hist_nomNuclDiff_protonPlus"
                },
                {
                   input_hist: "INCL++_protonPlus_NuclDiff"
-                  name: "hist_altDiff_protonPlus"
+                  name: "hist_altNuclDiff_protonPlus"
                },
                {
                   input_hist: "hA2018_neutron_NuclDiff"
-                  name: "hist_nomDiff_neutron"
+                  name: "hist_nomNuclDiff_neutron"
                },
                {
                   input_hist: "INCL++_neutron_NuclDiff"
-                  name: "hist_altDiff_neutron"
+                  name: "hist_altNuclDiff_neutron"
                },
                {
                   input_hist: "hA2018_piPlus_NuclDiff"
-                  name: "hist_nomDiff_piPlus"
+                  name: "hist_nomNuclDiff_piPlus"
                },
                {
                   input_hist: "INCL++_piPlus_NuclDiff"
-                  name: "hist_altDiff_piPlus"
+                  name: "hist_altNuclDiff_piPlus"
                },
                {
                   input_hist: "hA2018_pi0_NuclDiff"
-                  name: "hist_nomDiff_pi0"
+                  name: "hist_nomNuclDiff_pi0"
                },
                {
                   input_hist: "INCL++_pi0_NuclDiff"
-                  name: "hist_altDiff_pi0"
+                  name: "hist_altNuclDiff_pi0"
                },
                {
                   input_hist: "hA2018_piMinus_NuclDiff"
-                  name: "hist_nomDiff_piMinus"
+                  name: "hist_nomNuclDiff_piMinus"
                },
                {
                   input_hist: "INCL++_piMinus_NuclDiff"
-                  name: "hist_altDiff_piMinus"
+                  name: "hist_altNuclDiff_piMinus"
                }
             ]
          }
@@ -272,43 +272,43 @@ generated_systematic_provider_configuration: {
                },
                {
                   input_hist: "hA2018_protonPlus_NuclDiff"
-                  name: "hist_nomDiff_protonPlus"
+                  name: "hist_nomNuclDiff_protonPlus"
                },
                {
                   input_hist: "hN2018_protonPlus_NuclDiff"
-                  name: "hist_altDiff_protonPlus"
+                  name: "hist_altNuclDiff_protonPlus"
                },
                {
                   input_hist: "hA2018_neutron_NuclDiff"
-                  name: "hist_nomDiff_neutron"
+                  name: "hist_nomNuclDiff_neutron"
                },
                {
                   input_hist: "hN2018_neutron_NuclDiff"
-                  name: "hist_altDiff_neutron"
+                  name: "hist_altNuclDiff_neutron"
                },
                {
                   input_hist: "hA2018_piPlus_NuclDiff"
-                  name: "hist_nomDiff_piPlus"
+                  name: "hist_nomNuclDiff_piPlus"
                },
                {
                   input_hist: "hN2018_piPlus_NuclDiff"
-                  name: "hist_altDiff_piPlus"
+                  name: "hist_altNuclDiff_piPlus"
                },
                {
                   input_hist: "hA2018_pi0_NuclDiff"
-                  name: "hist_nomDiff_pi0"
+                  name: "hist_nomNuclDiff_pi0"
                },
                {
                   input_hist: "hN2018_pi0_NuclDiff"
-                  name: "hist_altDiff_pi0"
+                  name: "hist_altNuclDiff_pi0"
                },
                {
                   input_hist: "hA2018_piMinus_NuclDiff"
-                  name: "hist_nomDiff_piMinus"
+                  name: "hist_nomNuclDiff_piMinus"
                },
                {
                   input_hist: "hN2018_piMinus_NuclDiff"
-                  name: "hist_altDiff_piMinus"
+                  name: "hist_altNuclDiff_piMinus"
                }
             ]
          }
