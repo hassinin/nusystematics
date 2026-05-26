@@ -1,0 +1,326 @@
+generated_systematic_provider_configuration: {
+   FSIReweightMult_SBNNuSyst_FSIMult_G4BCReweight_multisigma: {
+      FSIReweightMult: {
+         centralParamValue: 0
+         isSplineable: true
+         paramVariations: [
+            0,
+            1
+         ]
+         prettyName: "FSIReweightMult"
+         systParamId: 2
+      }
+      instance_name: "SBNNuSyst_FSIMult_G4BCReweight_multisigma"
+      parameter_headers: [
+         "FSIReweightMult"
+      ]
+      tool_options: {
+         FSIReweightMult_input_manifest: {
+            input_file: "NuclMult_reweight_template.root"
+            inputs: [
+               {
+                  input_hist: "hA2018_proton_sum"
+                  name: "hist_nom_proton"
+               },
+               {
+                  input_hist: "G4BC_proton_sum"
+                  name: "hist_alt_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_sum"
+                  name: "hist_nom_neutron"
+               },
+               {
+                  input_hist: "G4BC_neutron_sum"
+                  name: "hist_alt_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_sum"
+                  name: "hist_nom_pionp"
+               },
+               {
+                  input_hist: "G4BC_pionp_sum"
+                  name: "hist_alt_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_sum"
+                  name: "hist_nom_pion0"
+               },
+               {
+                  input_hist: "G4BC_pion0_sum"
+                  name: "hist_alt_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_sum"
+                  name: "hist_nom_pionm"
+               },
+               {
+                  input_hist: "G4BC_pionm_sum"
+                  name: "hist_alt_pionm"
+               },
+               {
+                  input_hist: "hA2018_proton_diff"
+                  name: "hist_nomDiff_proton"
+               },
+               {
+                  input_hist: "G4BC_proton_diff"
+                  name: "hist_altDiff_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_diff"
+                  name: "hist_nomDiff_neutron"
+               },
+               {
+                  input_hist: "G4BC_neutron_diff"
+                  name: "hist_altDiff_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_diff"
+                  name: "hist_nomDiff_pionp"
+               },
+               {
+                  input_hist: "G4BC_pionp_diff"
+                  name: "hist_altDiff_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_diff"
+                  name: "hist_nomDiff_pion0"
+               },
+               {
+                  input_hist: "G4BC_pion0_diff"
+                  name: "hist_altDiff_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_diff"
+                  name: "hist_nomDiff_pionm"
+               },
+               {
+                  input_hist: "G4BC_pionm_diff"
+                  name: "hist_altDiff_pionm"
+               }
+            ]
+         }
+         fill_valid_tree: false
+         save_map: false
+      }
+      tool_type: "FSIReweightMult"
+   }
+   FSIReweightMult_SBNNuSyst_FSIMult_INCLReweight_multisigma: {
+      FSIReweightMult: {
+         centralParamValue: 0
+         isSplineable: true
+         paramVariations: [
+            0,
+            1
+         ]
+         prettyName: "FSIReweightMult"
+         systParamId: 1
+      }
+      instance_name: "SBNNuSyst_FSIMult_INCLReweight_multisigma"
+      parameter_headers: [
+         "FSIReweightMult"
+      ]
+      tool_options: {
+         FSIReweightMult_input_manifest: {
+            input_file: "NuclMult_reweight_template.root"
+            inputs: [
+               {
+                  input_hist: "hA2018_proton_sum"
+                  name: "hist_nom_proton"
+               },
+               {
+                  input_hist: "INCL_proton_sum"
+                  name: "hist_alt_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_sum"
+                  name: "hist_nom_neutron"
+               },
+               {
+                  input_hist: "INCL_neutron_sum"
+                  name: "hist_alt_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_sum"
+                  name: "hist_nom_pionp"
+               },
+               {
+                  input_hist: "INCL_pionp_sum"
+                  name: "hist_alt_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_sum"
+                  name: "hist_nom_pion0"
+               },
+               {
+                  input_hist: "INCL_pion0_sum"
+                  name: "hist_alt_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_sum"
+                  name: "hist_nom_pionm"
+               },
+               {
+                  input_hist: "INCL_pionm_sum"
+                  name: "hist_alt_pionm"
+               },
+               {
+                  input_hist: "hA2018_proton_diff"
+                  name: "hist_nomDiff_proton"
+               },
+               {
+                  input_hist: "INCL_proton_diff"
+                  name: "hist_altDiff_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_diff"
+                  name: "hist_nomDiff_neutron"
+               },
+               {
+                  input_hist: "INCL_neutron_diff"
+                  name: "hist_altDiff_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_diff"
+                  name: "hist_nomDiff_pionp"
+               },
+               {
+                  input_hist: "INCL_pionp_diff"
+                  name: "hist_altDiff_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_diff"
+                  name: "hist_nomDiff_pion0"
+               },
+               {
+                  input_hist: "INCL_pion0_diff"
+                  name: "hist_altDiff_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_diff"
+                  name: "hist_nomDiff_pionm"
+               },
+               {
+                  input_hist: "INCL_pionm_diff"
+                  name: "hist_altDiff_pionm"
+               }
+            ]
+         }
+         fill_valid_tree: false
+         save_map: false
+      }
+      tool_type: "FSIReweightMult"
+   }
+   FSIReweightMult_SBNNuSyst_FSIMult_hN2018Reweight_multisigma: {
+      FSIReweightMult: {
+         centralParamValue: 0
+         isSplineable: true
+         paramVariations: [
+            0,
+            1
+         ]
+         prettyName: "FSIReweightMult"
+         systParamId: 0
+      }
+      instance_name: "SBNNuSyst_FSIMult_hN2018Reweight_multisigma"
+      parameter_headers: [
+         "FSIReweightMult"
+      ]
+      tool_options: {
+         FSIReweightMult_input_manifest: {
+            input_file: "NuclMult_reweight_template.root"
+            inputs: [
+               {
+                  input_hist: "hA2018_proton_sum"
+                  name: "hist_nom_proton"
+               },
+               {
+                  input_hist: "hN2018_proton_sum"
+                  name: "hist_alt_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_sum"
+                  name: "hist_nom_neutron"
+               },
+               {
+                  input_hist: "hN2018_neutron_sum"
+                  name: "hist_alt_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_sum"
+                  name: "hist_nom_pionp"
+               },
+               {
+                  input_hist: "hN2018_pionp_sum"
+                  name: "hist_alt_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_sum"
+                  name: "hist_nom_pion0"
+               },
+               {
+                  input_hist: "hN2018_pion0_sum"
+                  name: "hist_alt_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_sum"
+                  name: "hist_nom_pionm"
+               },
+               {
+                  input_hist: "hN2018_pionm_sum"
+                  name: "hist_alt_pionm"
+               },
+               {
+                  input_hist: "hA2018_proton_diff"
+                  name: "hist_nomDiff_proton"
+               },
+               {
+                  input_hist: "hN2018_proton_diff"
+                  name: "hist_altDiff_proton"
+               },
+               {
+                  input_hist: "hA2018_neutron_diff"
+                  name: "hist_nomDiff_neutron"
+               },
+               {
+                  input_hist: "hN2018_neutron_diff"
+                  name: "hist_altDiff_neutron"
+               },
+               {
+                  input_hist: "hA2018_pionp_diff"
+                  name: "hist_nomDiff_pionp"
+               },
+               {
+                  input_hist: "hN2018_pionp_diff"
+                  name: "hist_altDiff_pionp"
+               },
+               {
+                  input_hist: "hA2018_pion0_diff"
+                  name: "hist_nomDiff_pion0"
+               },
+               {
+                  input_hist: "hN2018_pion0_diff"
+                  name: "hist_altDiff_pion0"
+               },
+               {
+                  input_hist: "hA2018_pionm_diff"
+                  name: "hist_nomDiff_pionm"
+               },
+               {
+                  input_hist: "hN2018_pionm_diff"
+                  name: "hist_altDiff_pionm"
+               }
+            ]
+         }
+         fill_valid_tree: false
+         save_map: false
+      }
+      tool_type: "FSIReweightMult"
+   }
+   syst_providers: [
+      "FSIReweightMult_SBNNuSyst_FSIMult_hN2018Reweight_multisigma",
+      "FSIReweightMult_SBNNuSyst_FSIMult_INCLReweight_multisigma",
+      "FSIReweightMult_SBNNuSyst_FSIMult_G4BCReweight_multisigma"
+   ]
+}
+
