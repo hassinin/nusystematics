@@ -95,12 +95,13 @@ namespace nusyst {
     if(weight_nom==0.){
       return 1.;
     }
-    if(weight_alt==0.){
-      weight_alt=1;
-    }
+
     double weight = ( weight_nom * (1.-parameter_value) + weight_alt * parameter_value ) / weight_nom;
     //cout<<"weight "<<weight<<endl;
-   
+     if(weight<0.001){
+    //cout<<"weight_nom==0."<<endl;
+    return 0.001;
+  }
     return weight;
 
   }

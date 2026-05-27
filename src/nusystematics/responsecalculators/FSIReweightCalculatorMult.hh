@@ -109,9 +109,9 @@ namespace nusyst {
 
     double weight = ( weight_nom * (1.-parameter_value) + weight_alt * parameter_value ) / weight_nom;
     //cout<<"weight "<<weight<<endl;
-     if(weight<0.01){
+     if(weight<0.001){
     //cout<<"weight_nom==0."<<endl;
-    return 0.01;
+    return 0.001;
   }
     return weight;
 
@@ -158,9 +158,9 @@ inline double FSIReweightCalculatorMult::GetFSIReweightMultDiff(double KEini, do
 
   double weight = ( weight_nom * (1.-parameter_value) + weight_alt * parameter_value ) / weight_nom;
   //cout<<"weight "<<weight<<endl;
-  if(weight<0.01){
+  if(weight<0.001){
     //cout<<"weight_nom==0."<<endl;
-    return 0.01;
+    return 0.001;
   }
 
   return weight;
