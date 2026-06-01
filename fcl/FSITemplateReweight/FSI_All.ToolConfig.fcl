@@ -1,9 +1,0 @@
-#include "FSI_G4BC.ToolConfig.fcl"
-#include "FSI_INCL.ToolConfig.fcl"
-#include "FSI_hN.ToolConfig.fcl"
-
-syst_providers: [
-FSI_hN_Tool_Config,
-FSI_INCL_Tool_Config,
-FSI_G4BC_Tool_Config
-]
