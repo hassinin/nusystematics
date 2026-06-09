@@ -207,7 +207,8 @@ public:
             pr.responses[idx] -= CVResp;
           }
         }
-        // For a correction dial, we have NVars=0, so manually update CVResp and responses
+        // Backward-compatibility; isCorrection header used to have empty paramVariations (here, NVars=0),
+        // so manually update CVResp and responses
         if( hdr.isCorrection ){
           CVResp = pr.responses[0];
           pr.responses[0] = 1.;
